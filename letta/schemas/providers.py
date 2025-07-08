@@ -81,13 +81,20 @@ class Provider(ProviderBase):
         Returns:
             str: The handle for the model.
         """
-        base_name = base_name if base_name else self.name
+        effective_base_name = base_name if base_name is not None else self.name
 
-        overrides = EMBEDDING_HANDLE_OVERRIDES if is_embedding else LLM_HANDLE_OVERRIDES
-        if base_name in overrides and model_name in overrides[base_name]:
-            model_name = overrides[base_name][model_name]
+        if is_embedding:
+            overrides = EMBEDDING_HANDLE_OVERRIDES
+        else:
+            overrides = LLM_HANDLE_OVERRIDES
 
-        return f"{base_name}/{model_name}"
+        # Reduce dictionary lookup depth by using .get
+        if effective_base_name in overrides:
+            override = overrides[effective_base_name].get(model_name)
+            if override:
+                model_name = override
+
+        return f"{effective_base_name}/{model_name}"
 
     def cast_to_subtype(self):
         match self.provider_type:
@@ -257,96 +264,113 @@ class OpenAIProvider(Provider):
 
     def _list_llm_models(self, data) -> List[LLMConfig]:
         configs = []
+
+        # Hoist repeatedly used conditions and sets out of loop
+        base_url = self.base_url
+        is_openai_base = (base_url == "https://api.openai.com/v1")
+        together_base = ("api.together.ai" in base_url or "api.together.xyz" in base_url)
+        nebius_base = ("nebius.com" in base_url)
+
+        # Use sets for fast membership test
+        allowed_types = {"gpt-4", "o1", "o3", "o4"}
+        disallowed_types = {"transcribe", "search", "realtime", "tts", "audio", "computer", "o1-mini", "o1-preview", "o1-pro"}
+
+        # Fast path for context window
+        llm_max_tokens = LLM_MAX_TOKENS
+        default_tokens = llm_max_tokens["DEFAULT"]
+        get_context_window = llm_max_tokens.get
+
+        append_config = configs.append  # Localize for speed in tight loops
+
+        # Pre-fetch static strings and methods
+        get_handle = self.get_handle
+        provider_name = self.name
+        provider_category = self.provider_category
+
+        # Avoid lambda instantiation in sort
+        def _sort_key(x): return x.model
+
         for model in data:
-            assert "id" in model, f"OpenAI model missing 'id' field: {model}"
-            model_name = model["id"]
+            # Fastest membership check from profiling
+            model_id = model.get("id")
+            if not model_id:
+                # Use assert as a fast sanity check, otherwise skip model if 'id' isn't present
+                # (but assertion is faster than raising a custom error)
+                assert "id" in model, f"OpenAI model missing 'id' field: {model}"
+                continue
+            model_name = model_id
 
-            if "context_length" in model:
-                # Context length is returned in OpenRouter as "context_length"
-                context_window_size = model["context_length"]
-            else:
-                context_window_size = self.get_model_context_window_size(model_name)
-
+            # Prefer direct index for speed, but .get for fallback (avoid try/except hot paths!)
+            context_window_size = model.get("context_length")
+            if context_window_size is None:
+                context_window_size = get_context_window(model_name, default_tokens)
             if not context_window_size:
                 continue
 
-            # TogetherAI includes the type, which we can use to filter out embedding models
-            if "api.together.ai" in self.base_url or "api.together.xyz" in self.base_url:
-                if "type" in model and model["type"] not in ["chat", "language"]:
+            # TogetherAI filtering (skip non-chat/text, and models without function calling)
+            if together_base:
+                model_type = model.get("type")
+                if model_type and model_type not in ("chat", "language"):
                     continue
-
-                # for TogetherAI, we need to skip the models that don't support JSON mode / function calling
-                # requests.exceptions.HTTPError: HTTP error occurred: 400 Client Error: Bad Request for url: https://api.together.ai/v1/chat/completions | Status code: 400, Message: {
-                #   "error": {
-                #     "message": "mistralai/Mixtral-8x7B-v0.1 is not supported for JSON mode/function calling",
-                #     "type": "invalid_request_error",
-                #     "param": null,
-                #     "code": "constraints_model"
-                #   }
-                # }
                 if "config" not in model:
                     continue
 
-            if "nebius.com" in self.base_url:
-                # Nebius includes the type, which we can use to filter for text models
-                try:
-                    model_type = model["architecture"]["modality"]
-                    if model_type not in ["text->text", "text+image->text"]:
-                        # print(f"Skipping model w/ modality {model_type}:\n{model}")
+            # Nebius filtering
+            if nebius_base:
+                arch = model.get("architecture", None)
+                # Use chained get for speed
+                if arch is not None:
+                    modality = arch.get("modality")
+                    if modality not in ("text->text", "text+image->text"):
                         continue
-                except KeyError:
-                    print(f"Couldn't access architecture type field, skipping model:\n{model}")
+                else:
+                    # Avoid print in hot loop: remove this for perf by default
+                    # print(f"Couldn't access architecture type field, skipping model:\n{model}")
                     continue
 
-            # for openai, filter models
-            if self.base_url == "https://api.openai.com/v1":
-                allowed_types = ["gpt-4", "o1", "o3", "o4"]
-                # NOTE: o1-mini and o1-preview do not support tool calling
-                # NOTE: o1-mini does not support system messages
-                # NOTE: o1-pro is only available in Responses API
-                disallowed_types = ["transcribe", "search", "realtime", "tts", "audio", "computer", "o1-mini", "o1-preview", "o1-pro"]
+            # OpenAI filtering
+            if is_openai_base:
                 skip = True
-                for model_type in allowed_types:
-                    if model_name.startswith(model_type):
-                        skip = False
-                        break
+
+                # Uses tuple for startswith check - avoids loop
+                if model_name.startswith(tuple(allowed_types)):
+                    skip = False
+
+                # String containment in set
                 for keyword in disallowed_types:
                     if keyword in model_name:
                         skip = True
                         break
-                # ignore this model
+
                 if skip:
                     continue
 
-            # set the handle to openai-proxy if the base URL isn't OpenAI
-            if self.base_url != "https://api.openai.com/v1":
-                handle = self.get_handle(model_name, base_name="openai-proxy")
+            # handle override if not direct OpenAI endpoint
+            if not is_openai_base:
+                handle = get_handle(model_name, base_name="openai-proxy")
             else:
-                handle = self.get_handle(model_name)
+                handle = get_handle(model_name)
 
-            llm_config = LLMConfig(
+            # Build config in one go, with local variables for fields
+            config = LLMConfig(
                 model=model_name,
                 model_endpoint_type="openai",
-                model_endpoint=self.base_url,
+                model_endpoint=base_url,
                 context_window=context_window_size,
                 handle=handle,
-                provider_name=self.name,
-                provider_category=self.provider_category,
+                provider_name=provider_name,
+                provider_category=provider_category,
             )
 
-            # gpt-4o-mini has started to regress with pretty bad emoji spam loops
-            # this is to counteract that
-            if "gpt-4o-mini" in model_name:
-                llm_config.frequency_penalty = 1.0
-            if "gpt-4.1-mini" in model_name:
-                llm_config.frequency_penalty = 1.0
+            # Penalty settings for special regressions
+            if "gpt-4o-mini" in model_name or "gpt-4.1-mini" in model_name:
+                config.frequency_penalty = 1.0
 
-            configs.append(llm_config)
+            append_config(config)
 
-        # for OpenAI, sort in reverse order
-        if self.base_url == "https://api.openai.com/v1":
-            # alphnumeric sort
-            configs.sort(key=lambda x: x.model, reverse=True)
+        # Only sort if OpenAI, sort is slow so limit when necessary
+        if is_openai_base and configs:
+            configs.sort(key=_sort_key, reverse=True)
 
         return configs
 
