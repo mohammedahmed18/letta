@@ -169,6 +169,7 @@ class OpenAIObject(dict):
         engine=None,
         response_ms: Optional[int] = None,
     ):
+        # Fast-path: Avoid unnecessary calls and preallocate all necessary values
         instance = cls(
             values.get("id"),
             api_key=api_key,
@@ -195,16 +196,31 @@ class OpenAIObject(dict):
         organization=None,
         response_ms: Optional[int] = None,
     ):
-        self.api_key = api_key or getattr(values, "api_key", None)
-        self.api_version = api_version or getattr(values, "api_version", None)
-        self.api_type = api_type or getattr(values, "api_type", None)
-        self.organization = organization or getattr(values, "organization", None)
-        self._response_ms = response_ms or getattr(values, "_response_ms", None)
+        # Inline fast attribute getter for dict/object hybrid
+        def get_attr(source, name, default=None):
+            # For dict-like
+            if isinstance(source, dict):
+                return source.get(name, default)
+            # For object-like
+            return getattr(source, name, default)
+        
+        # Use the supplied values, or fallback to values' attributes/keys
+        object.__setattr__(self, "api_key", api_key if api_key is not None else get_attr(values, "api_key", None))
+        object.__setattr__(self, "api_version", api_version if api_version is not None else get_attr(values, "api_version", None))
+        object.__setattr__(self, "api_type", api_type if api_type is not None else get_attr(values, "api_type", None))
+        object.__setattr__(self, "organization", organization if organization is not None else get_attr(values, "organization", None))
+        self._response_ms = response_ms if response_ms is not None else get_attr(values, "_response_ms", None)
 
         # Wipe old state before setting new.
         self.clear()
+        # Cache lookups to local variables
+        conv = convert_to_openai_object
+        api_key_ = self.api_key
+        api_version_ = self.api_version
+        organization_ = self.organization
+        setitem = super(OpenAIObject, self).__setitem__
         for k, v in values.items():
-            super(OpenAIObject, self).__setitem__(k, convert_to_openai_object(v, api_key, api_version, organization))
+            setitem(k, conv(v, api_key_, api_version_, organization_))
 
         self._previous = values
 
