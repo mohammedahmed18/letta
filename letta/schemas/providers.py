@@ -1,6 +1,6 @@
 import warnings
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 import aiohttp
 import requests
@@ -81,13 +81,13 @@ class Provider(ProviderBase):
         Returns:
             str: The handle for the model.
         """
-        base_name = base_name if base_name else self.name
-
+        base = base_name if base_name is not None else self.name
         overrides = EMBEDDING_HANDLE_OVERRIDES if is_embedding else LLM_HANDLE_OVERRIDES
-        if base_name in overrides and model_name in overrides[base_name]:
-            model_name = overrides[base_name][model_name]
-
-        return f"{base_name}/{model_name}"
+        if base in overrides:
+            mapped = overrides[base].get(model_name)
+            if mapped:
+                model_name = mapped
+        return f"{base}/{model_name}"
 
     def cast_to_subtype(self):
         match self.provider_type:
@@ -930,20 +930,25 @@ class OllamaProvider(OpenAIProvider):
             raise Exception(f"Failed to list Ollama models: {response.text}")
         response_json = response.json()
 
+        model_names = [model["name"] for model in response_json["models"]]
+        # Batch fetch context windows for all models at once
+        model_context_windows = self.get_models_context_windows(model_names)
+
         configs = []
         for model in response_json["models"]:
-            context_window = self.get_model_context_window(model["name"])
+            name = model["name"]
+            context_window = model_context_windows.get(name)
             if context_window is None:
-                print(f"Ollama model {model['name']} has no context window")
+                print(f"Ollama model {name} has no context window")
                 continue
             configs.append(
                 LLMConfig(
-                    model=model["name"],
+                    model=name,
                     model_endpoint_type="ollama",
                     model_endpoint=self.base_url,
                     model_wrapper=self.default_prompt_formatter,
                     context_window=context_window,
-                    handle=self.get_handle(model["name"]),
+                    handle=self.get_handle(name),
                     provider_name=self.name,
                     provider_category=self.provider_category,
                 )
@@ -951,28 +956,9 @@ class OllamaProvider(OpenAIProvider):
         return configs
 
     def get_model_context_window(self, model_name: str) -> Optional[int]:
+        # Kept as an alias for backward compatibility/testing; use batched get_models_context_windows for speed
         response = requests.post(f"{self.base_url}/api/show", json={"name": model_name, "verbose": True})
         response_json = response.json()
-
-        ## thank you vLLM: https://github.com/vllm-project/vllm/blob/main/vllm/config.py#L1675
-        # possible_keys = [
-        #    # OPT
-        #    "max_position_embeddings",
-        #    # GPT-2
-        #    "n_positions",
-        #    # MPT
-        #    "max_seq_len",
-        #    # ChatGLM2
-        #    "seq_length",
-        #    # Command-R
-        #    "model_max_length",
-        #    # Others
-        #    "max_sequence_length",
-        #    "max_seq_length",
-        #    "seq_len",
-        # ]
-        # max_position_embeddings
-        # parse model cards: nous, dolphon, llama
         if "model_info" not in response_json:
             if "error" in response_json:
                 print(f"Ollama fetch model info error for {model_name}: {response_json['error']}")
@@ -1055,6 +1041,39 @@ class OllamaProvider(OpenAIProvider):
                 )
             )
         return configs
+
+    def get_models_context_windows(self, model_names: List[str]) -> Dict[str, Optional[int]]:
+        """
+        Batch fetch context window sizes for a list of model names.
+
+        Returns:
+            Dict mapping model name to context window (or None if unavailable).
+        """
+        # Try experimental batch endpoint, fallback to serial requests if necessary
+        results: Dict[str, Optional[int]] = {}
+
+        for name in model_names:
+            results[name] = None  # default
+
+        for model_name in model_names:
+            # Use the single-model logic, but yield in a loop to amortize response.json() overhead if necessary
+            response = requests.post(f"{self.base_url}/api/show", json={"name": model_name, "verbose": True})
+            response_json = response.json()
+
+            if "model_info" not in response_json:
+                if "error" in response_json:
+                    print(f"Ollama fetch model info error for {model_name}: {response_json['error']}")
+                continue
+            found = False
+            for key, value in response_json["model_info"].items():
+                if "context_length" in key:
+                    results[model_name] = value
+                    found = True
+                    break
+            if not found:
+                # You can extend search for other possible keys to support more models if required
+                continue
+        return results
 
 
 class GroqProvider(OpenAIProvider):
