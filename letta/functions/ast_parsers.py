@@ -22,14 +22,19 @@ def resolve_type(annotation: str):
     Raises:
         ValueError: If the annotation is unsupported or invalid.
     """
-    python_types = {**vars(typing), **vars(builtins)}
+    # Use cache to avoid recomputation
+    if annotation in _RESOLVE_TYPE_CACHE:
+        return _RESOLVE_TYPE_CACHE[annotation]
 
-    if annotation in python_types:
-        return python_types[annotation]
+    if annotation in _PYTHON_TYPES:
+        typ = _PYTHON_TYPES[annotation]
+        _RESOLVE_TYPE_CACHE[annotation] = typ
+        return typ
 
     try:
-        # Allow use of typing and builtins in a safe eval context
-        return eval(annotation, python_types)
+        typ = eval(annotation, _PYTHON_TYPES)
+        _RESOLVE_TYPE_CACHE[annotation] = typ
+        return typ
     except Exception:
         raise ValueError(f"Unsupported annotation: {annotation}")
 
@@ -63,31 +68,47 @@ def get_function_annotations_from_source(source_code: str, function_name: str) -
 
 # NOW json_loads -> ast.literal_eval -> typing.get_origin
 def coerce_dict_args_by_annotations(function_args: JsonDict, annotations: Dict[str, str]) -> dict:
-    coerced_args = dict(function_args)  # Shallow copy
+    # Avoid duplicating dict for every call if not needed; if function_args isn't going to be
+    # mutated (pythonic way), shallow copy is fine and is already fastest.
+    coerced_args = function_args.copy()
+    # Pre-resolve types and origins for this function signature if there are many args
+    _type_and_origin_cache = {}
 
     for arg_name, value in coerced_args.items():
         if arg_name in annotations:
             annotation_str = annotations[arg_name]
+            # Use per-function-call cache to avoid repeated resolve_type and get_origin on same annotation
             try:
-                arg_type = resolve_type(annotation_str)
+                cache_key = annotation_str
+                type_and_origin = _type_and_origin_cache.get(cache_key)
+                if not type_and_origin:
+                    arg_type = resolve_type(annotation_str)
+                    origin = _GET_ORIGIN(arg_type)
+                    type_and_origin = (arg_type, origin)
+                    _type_and_origin_cache[cache_key] = type_and_origin
+                else:
+                    arg_type, origin = type_and_origin
 
-                # Always parse strings using literal_eval or json if possible
+                # Be as fast as possible on string parsing:
                 if isinstance(value, str):
+                    # Try fast-path: Only call each parsing function once, avoid try/except unless truly necessary
+                    loaded = False
                     try:
                         value = json.loads(value)
+                        loaded = True
                     except json.JSONDecodeError:
+                        pass
+                    if not loaded:
                         try:
                             value = ast.literal_eval(value)
                         except (SyntaxError, ValueError) as e:
                             if arg_type is not str:
                                 raise ValueError(f"Failed to coerce argument '{arg_name}' to {annotation_str}: {e}")
 
-                origin = typing.get_origin(arg_type)
+                # Handle origin fast
                 if origin in (list, dict, tuple, set):
-                    # Let the origin (e.g., list) handle coercion
                     coerced_args[arg_name] = origin(value)
                 else:
-                    # Coerce simple types (e.g., int, float)
                     coerced_args[arg_name] = arg_type(value)
 
             except Exception as e:
@@ -138,3 +159,10 @@ def get_function_name_and_docstring(source_code: str, name: Optional[str] = None
 
         traceback.print_exc()
         raise LettaToolCreateError(f"Failed to parse function name and docstring: {str(e)}")
+
+
+_PYTHON_TYPES = {**vars(typing), **vars(builtins)}
+
+_RESOLVE_TYPE_CACHE = {}
+
+_GET_ORIGIN = typing.get_origin
