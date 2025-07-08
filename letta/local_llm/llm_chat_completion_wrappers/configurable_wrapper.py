@@ -39,20 +39,35 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
         Args:
             pre_prompt (str): The pre-prompt content.
             post_prompt (str): The post-prompt content
-            sys_prompt_start (str): The system messages prompt start. For chatml, this would be '<|im_start|>system\n'
+            sys_prompt_start (str): The system messages prompt start. For chatml, this would be '<|im_start|>system
+'
             sys_prompt_end (str): The system messages prompt end. For chatml, this would be '<|im_end|>'
-            user_prompt_start (str): The user messages prompt start. For chatml, this would be '<|im_start|>user\n'
-            user_prompt_end (str): The user messages prompt end. For chatml, this would be '<|im_end|>\n'
-            assistant_prompt_start (str): The assistant messages prompt start. For chatml, this would be '<|im_start|>user\n'
-            assistant_prompt_end (str): The assistant messages prompt end. For chatml, this would be '<|im_end|>\n'
-            tool_prompt_start (str): The tool messages prompt start. For chatml, this would be '<|im_start|>tool\n' if the model supports the tool role, otherwise it would be something like '<|im_start|>user\nFUNCTION RETURN:\n'
-            tool_prompt_end (str): The tool messages prompt end. For chatml, this would be '<|im_end|>\n'
-            assistant_prefix_extra (str): A prefix for every assistant message to steer the model to output JSON. Something like '\n{\n  "function":'
-            assistant_prefix_extra_first_message (str): A prefix for the first assistant message to steer the model to output JSON and use a specific function. Something like '\n{\n  "function": "send_message",'
+            user_prompt_start (str): The user messages prompt start. For chatml, this would be '<|im_start|>user
+'
+            user_prompt_end (str): The user messages prompt end. For chatml, this would be '<|im_end|>
+'
+            assistant_prompt_start (str): The assistant messages prompt start. For chatml, this would be '<|im_start|>user
+'
+            assistant_prompt_end (str): The assistant messages prompt end. For chatml, this would be '<|im_end|>
+'
+            tool_prompt_start (str): The tool messages prompt start. For chatml, this would be '<|im_start|>tool
+' if the model supports the tool role, otherwise it would be something like '<|im_start|>user
+FUNCTION RETURN:
+'
+            tool_prompt_end (str): The tool messages prompt end. For chatml, this would be '<|im_end|>
+'
+            assistant_prefix_extra (str): A prefix for every assistant message to steer the model to output JSON. Something like '
+{
+  "function":'
+            assistant_prefix_extra_first_message (str): A prefix for the first assistant message to steer the model to output JSON and use a specific function. Something like '
+{
+  "function": "send_message",'
             allow_custom_roles (bool): If the wrapper allows custom roles, like names for autogen agents.
-            custom_post_role (str): The part that comes after the custom role string.  For chatml, this would be '\n'
+            custom_post_role (str): The part that comes after the custom role string.  For chatml, this would be '
+'
             custom_roles_prompt_start: (str): Custom role prompt start. For chatml, this would be '<|im_start|>'
-            custom_roles_prompt_end: (str): Custom role prompt start. For chatml, this would be '<|im_end|>\n'
+            custom_roles_prompt_end: (str): Custom role prompt start. For chatml, this would be '<|im_end|>
+'
             include_sys_prompt_in_first_user_message (bool): Indicates whether to include the system prompt in the first user message. For Llama2 this would be True, for chatml, this would be False
             simplify_json_content (bool):
             strip_prompt (bool): If whitespaces at the end and beginning of the prompt get stripped.
@@ -88,29 +103,34 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
     def _compile_function_description(self, schema, add_inner_thoughts=True) -> str:
         """Go from a JSON schema to a string description for a prompt"""
         # airorobos style
-        func_str = ""
-        func_str += f"{schema['name']}:"
-        func_str += f"\n  description: {schema['description']}"
-        func_str += f"\n  params:"
+        lines = [
+            f"{schema['name']}:",
+            f"  description: {schema['description']}",
+            f"  params:",
+        ]
         if add_inner_thoughts:
-            func_str += f"\n    inner_thoughts: Deep inner monologue private to you only."
-        for param_k, param_v in schema["parameters"]["properties"].items():
-            # TODO we're ignoring type
-            func_str += f"\n    {param_k}: {param_v['description']}"
-        # TODO we're ignoring schema['parameters']['required']
-        return func_str
+            lines.append("    inner_thoughts: Deep inner monologue private to you only.")
+        #  .items() returns a view; avoid list conversion and loop directly
+        props = schema["parameters"]["properties"]
+        # static on required, so no need to optimize
+        for param_k, param_v in props.items():
+            lines.append(f"    {param_k}: {param_v['description']}")
+        # Join once at the end for optimal string construction
+        return "\n".join(lines)
 
     def _compile_function_block(self, functions) -> str:
         """functions dict -> string describing functions choices"""
-        prompt = ""
-
-        # prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the user's input. Provide your response in JSON format."
-        prompt += f"Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-        prompt += f"\nAvailable functions:"
+        # Start with all static prompt message parts
+        lines = [
+            "Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format.",
+            "Available functions:",
+        ]
+        # Instead of repeated +=, build lines in a list and join at the end
+        append = lines.append  # local var for bullet-fast append
         for function_dict in functions:
-            prompt += f"\n{self._compile_function_description(function_dict)}"
-
-        return prompt
+            # Could further use single string join, but each is multi-line
+            append(self._compile_function_description(function_dict))
+        return "\n".join(lines)
 
     def _compile_system_message(self, system_message, functions, function_documentation=None) -> str:
         """system prompt + memory + functions -> string"""
