@@ -36,7 +36,11 @@ class Provider(ProviderBase):
 
     @model_validator(mode="after")
     def default_base_url(self):
-        if self.provider_type == ProviderType.openai and self.base_url is None:
+        # Short-circuit if the base_url is already set
+        if self.base_url is not None:
+            return self
+        # Use 'is' for Enum comparison for speed and clarity
+        if self.provider_type is ProviderType.openai:
             self.base_url = model_settings.openai_api_base
         return self
 
