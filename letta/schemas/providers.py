@@ -16,6 +16,7 @@ from letta.schemas.letta_base import LettaBase
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.llm_config_overrides import LLM_HANDLE_OVERRIDES
 from letta.settings import model_settings
+from letta.llm_api.google_constants import GOOGLE_EMBEDING_MODEL_TO_DIM
 
 
 class ProviderBase(LettaBase):
@@ -81,13 +82,12 @@ class Provider(ProviderBase):
         Returns:
             str: The handle for the model.
         """
-        base_name = base_name if base_name else self.name
-
+        base = base_name if base_name is not None else self.name
         overrides = EMBEDDING_HANDLE_OVERRIDES if is_embedding else LLM_HANDLE_OVERRIDES
-        if base_name in overrides and model_name in overrides[base_name]:
-            model_name = overrides[base_name][model_name]
-
-        return f"{base_name}/{model_name}"
+        override_models = overrides.get(base)
+        if override_models:
+            model_name = override_models.get(model_name, model_name)
+        return f"{base}/{model_name}"
 
     def cast_to_subtype(self):
         match self.provider_type:
@@ -1364,22 +1364,25 @@ class GoogleVertexProvider(Provider):
         return configs
 
     def list_embedding_models(self) -> List[EmbeddingConfig]:
-        from letta.llm_api.google_constants import GOOGLE_EMBEDING_MODEL_TO_DIM
+        # Pre-load frequently used attributes
+        gcp_location = self.google_cloud_location
+        gcp_project = self.google_cloud_project
+        endpoint = f"https://{gcp_location}-aiplatform.googleapis.com/v1/projects/{gcp_project}/locations/{gcp_location}"
+        get_handle = self.get_handle  # local reference for fastest method call
 
-        configs = []
-        for model, dim in GOOGLE_EMBEDING_MODEL_TO_DIM.items():
-            configs.append(
-                EmbeddingConfig(
-                    embedding_model=model,
-                    embedding_endpoint_type="google_vertex",
-                    embedding_endpoint=f"https://{self.google_cloud_location}-aiplatform.googleapis.com/v1/projects/{self.google_cloud_project}/locations/{self.google_cloud_location}",
-                    embedding_dim=dim,
-                    embedding_chunk_size=300,  # NOTE: max is 2048
-                    handle=self.get_handle(model, is_embedding=True),
-                    batch_size=1024,
-                )
+        # Use list comprehension for speed
+        return [
+            EmbeddingConfig(
+                embedding_model=model,
+                embedding_endpoint_type="google_vertex",
+                embedding_endpoint=endpoint,
+                embedding_dim=dim,
+                embedding_chunk_size=300,  # NOTE: max is 2048
+                handle=get_handle(model, is_embedding=True),
+                batch_size=1024,
             )
-        return configs
+            for model, dim in GOOGLE_EMBEDING_MODEL_TO_DIM.items()
+        ]
 
 
 class AzureProvider(Provider):
