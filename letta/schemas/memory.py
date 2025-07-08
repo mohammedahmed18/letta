@@ -1,4 +1,5 @@
 import logging
+from functools import lru_cache
 from typing import TYPE_CHECKING, List, Optional
 
 from jinja2 import Template, TemplateSyntaxError
@@ -136,8 +137,13 @@ class Memory(BaseModel, validate_assignment=True):
     def compile(self, tool_usage_rules=None, sources=None) -> str:
         """Generate a string representation of the memory in-context using the Jinja2 template"""
         try:
-            template = Template(self.prompt_template)
-            return template.render(blocks=self.blocks, file_blocks=self.file_blocks, tool_usage_rules=tool_usage_rules, sources=sources)
+            template = self._get_compiled_template(self.prompt_template)
+            return template.render(
+                blocks=self.blocks,
+                file_blocks=self.file_blocks,
+                tool_usage_rules=tool_usage_rules,
+                sources=sources,
+            )
         except TemplateSyntaxError as e:
             raise ValueError(f"Invalid Jinja2 template syntax: {str(e)}")
         except Exception as e:
@@ -181,6 +187,11 @@ class Memory(BaseModel, validate_assignment=True):
                 block.value = value
                 return
         raise ValueError(f"Block with label {label} does not exist")
+
+    @staticmethod
+    @lru_cache(maxsize=8)  # You can increase if you anticipate more template variations!
+    def _get_compiled_template(prompt_template: str) -> Template:
+        return Template(prompt_template)
 
 
 # TODO: ideally this is refactored into ChatMemory and the subclasses are given more specific names.
