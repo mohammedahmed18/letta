@@ -1,3 +1,6 @@
+import json
+from datetime import datetime
+
 import yaml
 
 from ...errors import LLMJSONParsingError
@@ -39,20 +42,35 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
         Args:
             pre_prompt (str): The pre-prompt content.
             post_prompt (str): The post-prompt content
-            sys_prompt_start (str): The system messages prompt start. For chatml, this would be '<|im_start|>system\n'
+            sys_prompt_start (str): The system messages prompt start. For chatml, this would be '<|im_start|>system
+'
             sys_prompt_end (str): The system messages prompt end. For chatml, this would be '<|im_end|>'
-            user_prompt_start (str): The user messages prompt start. For chatml, this would be '<|im_start|>user\n'
-            user_prompt_end (str): The user messages prompt end. For chatml, this would be '<|im_end|>\n'
-            assistant_prompt_start (str): The assistant messages prompt start. For chatml, this would be '<|im_start|>user\n'
-            assistant_prompt_end (str): The assistant messages prompt end. For chatml, this would be '<|im_end|>\n'
-            tool_prompt_start (str): The tool messages prompt start. For chatml, this would be '<|im_start|>tool\n' if the model supports the tool role, otherwise it would be something like '<|im_start|>user\nFUNCTION RETURN:\n'
-            tool_prompt_end (str): The tool messages prompt end. For chatml, this would be '<|im_end|>\n'
-            assistant_prefix_extra (str): A prefix for every assistant message to steer the model to output JSON. Something like '\n{\n  "function":'
-            assistant_prefix_extra_first_message (str): A prefix for the first assistant message to steer the model to output JSON and use a specific function. Something like '\n{\n  "function": "send_message",'
+            user_prompt_start (str): The user messages prompt start. For chatml, this would be '<|im_start|>user
+'
+            user_prompt_end (str): The user messages prompt end. For chatml, this would be '<|im_end|>
+'
+            assistant_prompt_start (str): The assistant messages prompt start. For chatml, this would be '<|im_start|>user
+'
+            assistant_prompt_end (str): The assistant messages prompt end. For chatml, this would be '<|im_end|>
+'
+            tool_prompt_start (str): The tool messages prompt start. For chatml, this would be '<|im_start|>tool
+' if the model supports the tool role, otherwise it would be something like '<|im_start|>user
+FUNCTION RETURN:
+'
+            tool_prompt_end (str): The tool messages prompt end. For chatml, this would be '<|im_end|>
+'
+            assistant_prefix_extra (str): A prefix for every assistant message to steer the model to output JSON. Something like '
+{
+  "function":'
+            assistant_prefix_extra_first_message (str): A prefix for the first assistant message to steer the model to output JSON and use a specific function. Something like '
+{
+  "function": "send_message",'
             allow_custom_roles (bool): If the wrapper allows custom roles, like names for autogen agents.
-            custom_post_role (str): The part that comes after the custom role string.  For chatml, this would be '\n'
+            custom_post_role (str): The part that comes after the custom role string.  For chatml, this would be '
+'
             custom_roles_prompt_start: (str): Custom role prompt start. For chatml, this would be '<|im_start|>'
-            custom_roles_prompt_end: (str): Custom role prompt start. For chatml, this would be '<|im_end|>\n'
+            custom_roles_prompt_end: (str): Custom role prompt start. For chatml, this would be '<|im_end|>
+'
             include_sys_prompt_in_first_user_message (bool): Indicates whether to include the system prompt in the first user message. For Llama2 this would be True, for chatml, this would be False
             simplify_json_content (bool):
             strip_prompt (bool): If whitespaces at the end and beginning of the prompt get stripped.
@@ -177,17 +195,13 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
     # NOTE: BOS/EOS chatml tokens are NOT inserted here
     def _compile_function_response(self, message) -> str:
         """function response message (should be JSON) -> string"""
-        # TODO we should clean up send_message returns to avoid cluttering the prompt
-        prompt = ""
         try:
-            # indent the function replies
+            # indent the function replies, but use 0 for compactness
             function_return_dict = json_loads(message["content"])
             function_return_str = json_dumps(function_return_dict, indent=0)
-        except:
+        except json.JSONDecodeError:
             function_return_str = message["content"]
-
-        prompt += function_return_str
-        return prompt
+        return function_return_str
 
     def chat_completion_to_prompt(self, messages, functions, first_message=False, function_documentation=None):
         formatted_messages = self.pre_prompt
@@ -384,3 +398,10 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
         wrapper.default_stop_sequences = data.get("default_stop_sequences", [])
 
         return wrapper
+
+
+# Module-scope for reuse
+def _safe_serializer(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
