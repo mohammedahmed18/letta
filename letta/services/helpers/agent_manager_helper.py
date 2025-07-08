@@ -1066,7 +1066,14 @@ def calculate_base_tools(is_v2: bool) -> Set[str]:
 
 def calculate_multi_agent_tools() -> Set[str]:
     """Calculate multi-agent tools, excluding local-only tools in production environment."""
-    if os.getenv("LETTA_ENVIRONMENT") == "PRODUCTION":
-        return set(MULTI_AGENT_TOOLS) - set(LOCAL_ONLY_MULTI_AGENT_TOOLS)
+    # Use cached sets to avoid repeated set construction
+    if os.environ.get("LETTA_ENVIRONMENT") == "PRODUCTION":
+        return _PROD_MULTI_AGENT_TOOLS_SET
     else:
-        return set(MULTI_AGENT_TOOLS)
+        return _MULTI_AGENT_TOOLS_SET
+
+_MULTI_AGENT_TOOLS_SET = set(MULTI_AGENT_TOOLS)
+
+_LOCAL_ONLY_MULTI_AGENT_TOOLS_SET = set(LOCAL_ONLY_MULTI_AGENT_TOOLS)
+
+_PROD_MULTI_AGENT_TOOLS_SET = _MULTI_AGENT_TOOLS_SET - _LOCAL_ONLY_MULTI_AGENT_TOOLS_SET
