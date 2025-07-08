@@ -1058,10 +1058,11 @@ def build_agent_passage_query(
 
 
 def calculate_base_tools(is_v2: bool) -> Set[str]:
+    # Return precomputed sets for speed.
     if is_v2:
-        return (set(BASE_TOOLS) - set(DEPRECATED_LETTA_TOOLS)) | set(BASE_MEMORY_TOOLS_V2)
+        return _BASE_TOOLS_V2
     else:
-        return (set(BASE_TOOLS) - set(DEPRECATED_LETTA_TOOLS)) | set(BASE_MEMORY_TOOLS)
+        return _BASE_TOOLS_V1
 
 
 def calculate_multi_agent_tools() -> Set[str]:
@@ -1070,3 +1071,9 @@ def calculate_multi_agent_tools() -> Set[str]:
         return set(MULTI_AGENT_TOOLS) - set(LOCAL_ONLY_MULTI_AGENT_TOOLS)
     else:
         return set(MULTI_AGENT_TOOLS)
+
+_BASE_TOOLS_MINUS_DEPRECATED = set(BASE_TOOLS) - set(DEPRECATED_LETTA_TOOLS)
+
+_BASE_TOOLS_V1 = _BASE_TOOLS_MINUS_DEPRECATED | set(BASE_MEMORY_TOOLS)
+
+_BASE_TOOLS_V2 = _BASE_TOOLS_MINUS_DEPRECATED | set(BASE_MEMORY_TOOLS_V2)
