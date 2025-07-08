@@ -81,13 +81,17 @@ class Provider(ProviderBase):
         Returns:
             str: The handle for the model.
         """
-        base_name = base_name if base_name else self.name
-
+        # Hot path: minimize attribute lookups and dict accesses
+        base = base_name if base_name is not None else self.name
         overrides = EMBEDDING_HANDLE_OVERRIDES if is_embedding else LLM_HANDLE_OVERRIDES
-        if base_name in overrides and model_name in overrides[base_name]:
-            model_name = overrides[base_name][model_name]
 
-        return f"{base_name}/{model_name}"
+        # Use dict.get to avoid unnecessary lookups
+        base_overrides = overrides.get(base)
+        if base_overrides:
+            override_model = base_overrides.get(model_name)
+            if override_model is not None:
+                model_name = override_model
+        return f"{base}/{model_name}"
 
     def cast_to_subtype(self):
         match self.provider_type:
@@ -427,60 +431,76 @@ class OpenAIProvider(Provider):
             return self._list_embedding_models(data)
 
     def _list_embedding_models(self, data) -> List[EmbeddingConfig]:
-        configs = []
+        # Cache frequently accessed attributes and strings
+        base_url = self.base_url
+        provider_type = self.provider_type
+
+        # Precompute substring matches for base_url to avoid multiple checks
+        is_nebius = "nebius.com" in base_url if base_url else False
+        is_together = (
+            ("together.ai" in base_url or "together.xyz" in base_url)
+            if base_url else False
+        )
+
+        configs_append = []
+        get_model_context_window_size = self.get_model_context_window_size
+        get_handle = self.get_handle
+
         for model in data:
-            assert "id" in model, f"Model missing 'id' field: {model}"
+            # Fast access to dict fields (assume no KeyError due to assert, else skip)
+            if "id" not in model:
+                # Maintain assertion as a safeguard
+                assert "id" in model, f"Model missing 'id' field: {model}"
             model_name = model["id"]
 
             if "context_length" in model:
-                # Context length is returned in Nebius as "context_length"
                 context_window_size = model["context_length"]
             else:
-                context_window_size = self.get_model_context_window_size(model_name)
+                context_window_size = get_model_context_window_size(model_name)
 
-            # We need the context length for embeddings too
             if not context_window_size:
                 continue
 
-            if "nebius.com" in self.base_url:
-                # Nebius includes the type, which we can use to filter for embedidng models
+            if is_nebius:
+                architecture = model.get("architecture")
                 try:
-                    model_type = model["architecture"]["modality"]
-                    if model_type not in ["text->embedding"]:
-                        # print(f"Skipping model w/ modality {model_type}:\n{model}")
+                    if not architecture:
+                        # Instead of hitting KeyError, fail fast
+                        print(f"Couldn't access architecture type field, skipping model:\n{model}")
                         continue
-                except KeyError:
+                    model_type = architecture.get("modality")
+                    if model_type != "text->embedding":
+                        continue
+                except Exception:
+                    # Only print for unexpected errors
                     print(f"Couldn't access architecture type field, skipping model:\n{model}")
                     continue
-
-            elif "together.ai" in self.base_url or "together.xyz" in self.base_url:
-                # TogetherAI includes the type, which we can use to filter for embedding models
-                if "type" in model and model["type"] not in ["embedding"]:
-                    # print(f"Skipping model w/ modality {model_type}:\n{model}")
+            elif is_together:
+                model_type = model.get("type")
+                # If type is present, must be exactly "embedding"
+                if model_type is not None and model_type != "embedding":
                     continue
-
             else:
-                # For other providers we should skip by default, since we don't want to assume embeddings are supported
+                # Skip for all other providers (as per comments)
                 continue
 
-            configs.append(
+            # Use locals for faster lookup in constructor
+            configs_append.append(
                 EmbeddingConfig(
                     embedding_model=model_name,
-                    embedding_endpoint_type=self.provider_type,
-                    embedding_endpoint=self.base_url,
+                    embedding_endpoint_type=provider_type,
+                    embedding_endpoint=base_url,
                     embedding_dim=context_window_size,
                     embedding_chunk_size=DEFAULT_EMBEDDING_CHUNK_SIZE,
-                    handle=self.get_handle(model, is_embedding=True),
+                    handle=get_handle(model, is_embedding=True),
                 )
             )
 
-        return configs
+        return configs_append
 
     def get_model_context_window_size(self, model_name: str):
-        if model_name in LLM_MAX_TOKENS:
-            return LLM_MAX_TOKENS[model_name]
-        else:
-            return LLM_MAX_TOKENS["DEFAULT"]
+        # Use dict.get with fallback for speed
+        return LLM_MAX_TOKENS.get(model_name, LLM_MAX_TOKENS["DEFAULT"])
 
 
 class DeepSeekProvider(OpenAIProvider):
