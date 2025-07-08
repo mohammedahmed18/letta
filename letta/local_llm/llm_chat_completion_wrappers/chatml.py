@@ -68,31 +68,34 @@ class ChatMLInnerMonologueWrapper(LLMChatCompletionWrapper):
     def _compile_function_description(self, schema, add_inner_thoughts=True) -> str:
         """Go from a JSON schema to a string description for a prompt"""
         # airorobos style
-        func_str = ""
-        func_str += f"{schema['name']}:"
-        func_str += f"\n  description: {schema['description']}"
-        func_str += f"\n  params:"
+        parts = [
+            f"{schema['name']}:",
+            f"\n  description: {schema['description']}",
+            "\n  params:"
+        ]
         if add_inner_thoughts:
-            from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
-
-            func_str += f"\n    {INNER_THOUGHTS_KWARG}: {INNER_THOUGHTS_KWARG_DESCRIPTION}"
-        for param_k, param_v in schema["parameters"]["properties"].items():
+            from letta.local_llm.constants import (
+                INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION)
+            parts.append(f"\n    {INNER_THOUGHTS_KWARG}: {INNER_THOUGHTS_KWARG_DESCRIPTION}")
+        parameters = schema["parameters"]["properties"]
+        for param_k, param_v in parameters.items():
             # TODO we're ignoring type
-            func_str += f"\n    {param_k}: {param_v['description']}"
+            parts.append(f"\n    {param_k}: {param_v['description']}")
         # TODO we're ignoring schema['parameters']['required']
-        return func_str
+        return "".join(parts)
 
     def _compile_function_block(self, functions) -> str:
         """functions dict -> string describing functions choices"""
-        prompt = ""
-
-        # prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the user's input. Provide your response in JSON format."
-        prompt += f"Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-        prompt += f"\nAvailable functions:"
+        # NOTE: string-append loop replaced with join on list for speed
+        _compile_function_description = self._compile_function_description  # Local lookup for loop
+        prompt_parts = [
+            "Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format.",
+            "\nAvailable functions:"
+        ]
         for function_dict in functions:
-            prompt += f"\n{self._compile_function_description(function_dict)}"
-
-        return prompt
+            prompt_parts.append("\n")
+            prompt_parts.append(_compile_function_description(function_dict))
+        return "".join(prompt_parts)
 
     # NOTE: BOS/EOS chatml tokens are NOT inserted here
     def _compile_system_message(self, system_message, functions, function_documentation=None) -> str:
