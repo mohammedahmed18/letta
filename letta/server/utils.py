@@ -39,8 +39,7 @@ def shorten_key_middle(key_string, chars_each_side=3):
     """
     if not key_string:
         return key_string
-    key_length = len(key_string)
-    if key_length <= 2 * chars_each_side:
+    if len(key_string) <= 2 * chars_each_side:
         return "..."  # Return ellipsis if the key is too short
-    else:
-        return key_string[:chars_each_side] + "..." + key_string[-chars_each_side:]
+    # Use f-string for efficient concatenation
+    return f"{key_string[:chars_each_side]}...{key_string[-chars_each_side:]}"
