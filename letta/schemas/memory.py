@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, List, Optional
 from jinja2 import Template, TemplateSyntaxError
 from pydantic import BaseModel, Field, field_validator
 
+from letta.schemas.block import Block
+
 # Forward referencing to avoid circular import with Agent -> Memory -> Agent
 if TYPE_CHECKING:
     pass
@@ -151,11 +153,11 @@ class Memory(BaseModel, validate_assignment=True):
     # TODO: these should actually be label, not name
     def get_block(self, label: str) -> Block:
         """Correct way to index into the memory.memory field, returns a Block"""
-        keys = []
         for block in self.blocks:
             if block.label == label:
                 return block
-            keys.append(block.label)
+        # Only build the list of available sections if not found
+        keys = [block.label for block in self.blocks]
         raise KeyError(f"Block field {label} does not exist (available sections = {', '.join(keys)})")
 
     def get_blocks(self) -> List[Block]:
