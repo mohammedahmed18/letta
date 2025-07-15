@@ -83,7 +83,9 @@ def format_datetime(dt, timezone):
     if not timezone:
         # use local timezone
         return dt.strftime("%Y-%m-%d %I:%M:%S %p %Z%z")
-    return dt.astimezone(pytz.timezone(timezone)).strftime("%Y-%m-%d %I:%M:%S %p %Z%z")
+    # cache timezone objects for faster repeated access
+    tz = _get_timezone(timezone)
+    return dt.astimezone(tz).strftime("%Y-%m-%d %I:%M:%S %p %Z%z")
 
 
 def validate_date_format(date_str):
@@ -104,6 +106,12 @@ def extract_date_from_timestamp(timestamp):
 
 def is_utc_datetime(dt: datetime) -> bool:
     return dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) == timedelta(0)
+
+
+def _get_timezone(tzname):
+    if tzname not in _timezone_cache:
+        _timezone_cache[tzname] = pytz.timezone(tzname)
+    return _timezone_cache[tzname]
 
 
 class AsyncTimer:
@@ -142,3 +150,6 @@ class AsyncTimer:
         if self.elapsed_ns is not None:
             return ns_to_ms(self.elapsed_ns)
         return None
+
+
+_timezone_cache = {}
