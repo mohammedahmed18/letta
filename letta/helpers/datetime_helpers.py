@@ -76,7 +76,7 @@ def ns_to_ms(ns: int) -> int:
 
 def timestamp_to_datetime(timestamp_seconds: int) -> datetime:
     """Convert Unix timestamp in seconds to UTC datetime object"""
-    return datetime.fromtimestamp(timestamp_seconds, tz=dt_timezone.utc)
+    return _fromtimestamp(timestamp_seconds, tz=_UTC)
 
 
 def format_datetime(dt, timezone):
@@ -142,3 +142,8 @@ class AsyncTimer:
         if self.elapsed_ns is not None:
             return ns_to_ms(self.elapsed_ns)
         return None
+
+
+_UTC = dt_timezone.utc
+
+_fromtimestamp = datetime.fromtimestamp
