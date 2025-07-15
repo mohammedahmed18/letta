@@ -77,25 +77,46 @@ def runtime_override_tool_json_schema(
         1. We will inject `send_message` tool calls with `response_format` if provided
         2. Tools will have an additional `request_heartbeat` parameter added.
     """
+    local_send_message_tool_name = SEND_MESSAGE_TOOL_NAME
+
+    # Save locals for even cheaper inner-loop access
+    response_format_is_non_text = response_format is not None and response_format.type != ResponseFormatType.text
+
     for tool_json in tool_list:
-        if tool_json["name"] == SEND_MESSAGE_TOOL_NAME and response_format and response_format.type != ResponseFormatType.text:
-            if response_format.type == ResponseFormatType.json_schema:
-                tool_json["parameters"]["properties"]["message"] = response_format.json_schema["schema"]
-            if response_format.type == ResponseFormatType.json_object:
-                tool_json["parameters"]["properties"]["message"] = {
-                    "type": "object",
-                    "description": "Message contents. All unicode (including emojis) are supported.",
-                    "additionalProperties": True,
-                    "properties": {},
-                }
-        if request_heartbeat:
-            # TODO (cliandy): see support for tool control loop parameters
-            if tool_json["name"] != SEND_MESSAGE_TOOL_NAME:
-                tool_json["parameters"]["properties"][REQUEST_HEARTBEAT_PARAM] = {
-                    "type": "boolean",
-                    "description": REQUEST_HEARTBEAT_DESCRIPTION,
-                }
-                if REQUEST_HEARTBEAT_PARAM not in tool_json["parameters"]["required"]:
-                    tool_json["parameters"]["required"].append(REQUEST_HEARTBEAT_PARAM)
+        tool_name = tool_json["name"]
+
+        # Only access these once per tool for speed.
+        parameters = tool_json["parameters"]
+        properties = parameters["properties"]
+
+        if tool_name == local_send_message_tool_name and response_format_is_non_text:
+            # Avoid repeated nested dict lookups
+            msg_type = response_format.type
+            if msg_type == ResponseFormatType.json_schema:
+                properties["message"] = response_format.json_schema["schema"]
+            elif msg_type == ResponseFormatType.json_object:
+                properties["message"] = _JSON_OBJECT_MESSAGE_SCHEMA
+
+        # Combine nested ifs for heartbeat
+        elif request_heartbeat:
+            if tool_name != local_send_message_tool_name:
+                properties[REQUEST_HEARTBEAT_PARAM] = _HEARTBEAT_PROPERTY
+                required = parameters["required"]
+                # Use set for O(1) presence check if large, otherwise list is fine
+                if REQUEST_HEARTBEAT_PARAM not in required:
+                    required.append(REQUEST_HEARTBEAT_PARAM)
 
     return tool_list
+
+
+_JSON_OBJECT_MESSAGE_SCHEMA = {
+    "type": "object",
+    "description": "Message contents. All unicode (including emojis) are supported.",
+    "additionalProperties": True,
+    "properties": {},
+}
+
+_HEARTBEAT_PROPERTY = {
+    "type": "boolean",
+    "description": REQUEST_HEARTBEAT_DESCRIPTION,
+}
