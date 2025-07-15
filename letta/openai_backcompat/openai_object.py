@@ -81,23 +81,25 @@ class OpenAIObject(dict):
         engine=None,
         **params,
     ):
-        super(OpenAIObject, self).__init__()
+        # Direct dict initialization for basic id
+        if id is not None:
+            super().__init__({"id": id})
+        else:
+            super().__init__()
 
         if response_ms is not None and not isinstance(response_ms, int):
             raise TypeError(f"response_ms is a {type(response_ms).__name__}.")
-        self._response_ms = response_ms
 
+        self._response_ms = response_ms
         self._retrieve_params = params
 
+        # Using object.__setattr__ for efficiency and to bypass __setattr__
         object.__setattr__(self, "api_key", api_key)
         object.__setattr__(self, "api_version", api_version)
         object.__setattr__(self, "api_type", api_type)
         object.__setattr__(self, "organization", organization)
         object.__setattr__(self, "api_base_override", api_base)
         object.__setattr__(self, "engine", engine)
-
-        if id:
-            self["id"] = id
 
     @property
     def response_ms(self) -> Optional[int]:
@@ -363,21 +365,17 @@ class OpenAIObject(dict):
     # if it was set to be set manually. Here we override the class' copy
     # arguments so that we can bypass these possible exceptions on __setitem__.
     def __copy__(self):
+        # Reuse .__init__ for correct attribute setup; copy dict in bulk.
         copied = OpenAIObject(
-            self.get("id"),
+            self.get("id", None),
             self.api_key,
             api_version=self.api_version,
             api_type=self.api_type,
             organization=self.organization,
         )
-
         copied._retrieve_params = self._retrieve_params
-
-        for k, v in self.items():
-            # Call parent's __setitem__ to avoid checks that we've added in the
-            # overridden version that can throw exceptions.
-            super(OpenAIObject, copied).__setitem__(k, v)
-
+        # Bulk dict update--much faster than per-item __setitem__
+        dict.update(copied, self)
         return copied
 
     # This class overrides __setitem__ to throw exceptions on inputs that it
