@@ -460,6 +460,7 @@ class RESTClient(AbstractClient):
         super().__init__(debug=debug)
         self.base_url = base_url
         self.api_prefix = api_prefix
+        self._blocks_url = f"{self.base_url}/{self.api_prefix}/blocks"
         if token:
             self.headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
         elif password:
@@ -1106,15 +1107,24 @@ class RESTClient(AbstractClient):
 
     def get_block_id(self, name: str, label: str) -> str:
         params = {"name": name, "label": label}
-        response = requests.get(f"{self.base_url}/{self.api_prefix}/blocks", params=params, headers=self.headers)
+        response = requests.get(self._blocks_url, params=params, headers=self.headers)
         if response.status_code != 200:
             raise ValueError(f"Failed to get block ID: {response.text}")
-        blocks = [Block(**block) for block in response.json()]
-        if len(blocks) == 0:
+
+        json_blocks = response.json()
+        # Process results directly, avoid unnecessary lists
+        result = None
+        found = 0
+        for block_data in json_blocks:
+            found += 1
+            if found == 1:
+                result = Block(**block_data)
+            else:
+                # More than 1 block found
+                raise ValueError(f"Multiple blocks found with name {name}")
+        if found == 0:
             return None
-        elif len(blocks) > 1:
-            raise ValueError(f"Multiple blocks found with name {name}")
-        return blocks[0].id
+        return result.id
 
     def delete_block(self, id: str) -> Block:
         response = requests.delete(f"{self.base_url}/{self.api_prefix}/blocks/{id}", headers=self.headers)
