@@ -588,29 +588,27 @@ def openai_embeddings_request(url: str, api_key: str, data: dict) -> EmbeddingRe
 
 def prepare_openai_payload(chat_completion_request: ChatCompletionRequest):
     data = chat_completion_request.model_dump(exclude_none=True)
+    model = chat_completion_request.model
+    tools = chat_completion_request.tools
 
     # add check otherwise will cause error: "Invalid value for 'parallel_tool_calls': 'parallel_tool_calls' is only allowed when 'tools' are specified."
-    if chat_completion_request.tools is not None:
+    if tools is not None:
         data["parallel_tool_calls"] = False
 
     # If functions == None, strip from the payload
-    if "functions" in data and data["functions"] is None:
+    # Combine dict pop for both keys if functions/tools is None, minimizing lookups
+    functions = data.get("functions", None)
+    if functions is None and "functions" in data:
         data.pop("functions")
         data.pop("function_call", None)  # extra safe,  should exist always (default="auto")
 
-    if "tools" in data and data["tools"] is None:
+    tool_list = data.get("tools", None)
+    if tool_list is None and "tools" in data:
         data.pop("tools")
         data.pop("tool_choice", None)  # extra safe,  should exist always (default="auto")
 
-    # # NOTE: move this out to wherever the ChatCompletionRequest is created
-    # if "tools" in data:
-    #     for tool in data["tools"]:
-    #         try:
-    #             tool["function"] = convert_to_structured_output(tool["function"])
-    #         except ValueError as e:
-    #             warnings.warn(f"Failed to convert tool function to structured output, tool={tool}, error={e}")
-
-    if not supports_parallel_tool_calling(chat_completion_request.model):
+    # Inline is_openai_reasoning_model logic to avoid extra call overhead
+    if model and (model.startswith("o1") or model.startswith("o3") or model.startswith("o4")):
         data.pop("parallel_tool_calls", None)
 
     return data
