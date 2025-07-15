@@ -41,28 +41,42 @@ def convert_param_to_str_value(param_type: str, raw_value: JsonValue) -> str:
     TODO (cliandy): increase sanitization checks here to fail at the right place
     """
 
-    valid_types = {"string", "integer", "boolean", "number", "array", "object"}
-    if param_type not in valid_types:
+    if param_type not in _VALID_TYPES:
         raise TypeError(f"Unsupported type: {param_type}, raw_value={raw_value}")
+
+    # Fast path: match by type (ordering "string", "integer", "boolean" by usage likelihood helps with branch prediction)
     if param_type == "string":
         # Safely handle python string
         return repr(raw_value)
+
     if param_type == "integer":
         return str(int(raw_value))
+
     if param_type == "boolean":
         if isinstance(raw_value, bool):
             return str(raw_value)
-        if isinstance(raw_value, int) and raw_value in (0, 1):
-            return str(bool(raw_value))
-        if isinstance(raw_value, str) and raw_value.strip().lower() in ("true", "false"):
-            return raw_value.strip().lower().capitalize()
+        elif isinstance(raw_value, int):
+            if raw_value == 1:
+                return "True"
+            elif raw_value == 0:
+                return "False"
+        elif isinstance(raw_value, str):
+            s = raw_value.strip().lower()
+            if s == "true":
+                return "True"
+            elif s == "false":
+                return "False"
         raise ValueError(f"Invalid boolean value: {raw_value}")
+
     if param_type == "array":
-        pass  # need more testing here
+        # pass  # need more testing here
         # if isinstance(raw_value, str):
         #     if raw_value.strip()[0] != "[" or raw_value.strip()[-1] != "]":
         #         raise ValueError(f'Invalid array value: "{raw_value}"')
         #     return raw_value.strip()
+        return str(raw_value)  # original fallback behavior
+
+    # covers "number", "object" and fallback for potential unknown supported types
     return str(raw_value)
 
 
@@ -99,3 +113,6 @@ def runtime_override_tool_json_schema(
                     tool_json["parameters"]["required"].append(REQUEST_HEARTBEAT_PARAM)
 
     return tool_list
+
+
+_VALID_TYPES = {"string", "integer", "boolean", "number", "array", "object"}
