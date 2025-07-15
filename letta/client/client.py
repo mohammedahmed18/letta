@@ -460,14 +460,15 @@ class RESTClient(AbstractClient):
         super().__init__(debug=debug)
         self.base_url = base_url
         self.api_prefix = api_prefix
+        # Merge headers more efficiently and early.
+        hdr = {"accept": "application/json"}
         if token:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
+            hdr["Authorization"] = f"Bearer {token}"
         elif password:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {password}"}
-        else:
-            self.headers = {"accept": "application/json"}
+            hdr["Authorization"] = f"Bearer {password}"
         if headers:
-            self.headers.update(headers)
+            hdr.update(headers)
+        self.headers = hdr
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
 
@@ -904,16 +905,24 @@ class RESTClient(AbstractClient):
         Returns:
             passages (List[Passage]): List of passages
         """
+        # Use dict comprehension and faster param setting
         params = {"limit": limit}
-        if before:
-            params["before"] = str(before)
-        if after:
-            params["after"] = str(after)
-        response = requests.get(
-            f"{self.base_url}/{self.api_prefix}/agents/{str(agent_id)}/archival-memory", params=params, headers=self.headers
-        )
+        if before is not None:
+            params["before"] = before
+        if after is not None:
+            params["after"] = after
+
+        url = f"{self.base_url}/{self.api_prefix}/agents/{agent_id}/archival-memory"
+        headers = self.headers
+        get = requests.get
+
+        response = get(url, params=params, headers=headers)
         assert response.status_code == 200, f"Failed to get archival memory: {response.text}"
-        return [Passage(**passage) for passage in response.json()]
+
+        # Optimize Passage construction by generator and local lookup for Passage
+        passages_data = response.json()
+        passage_cls = Passage
+        return [passage_cls(**passage) for passage in passages_data]
 
     def insert_archival_memory(self, agent_id: str, memory: str) -> List[Passage]:
         """
