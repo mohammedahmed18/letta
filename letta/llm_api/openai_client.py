@@ -95,11 +95,17 @@ def supports_structured_output(llm_config: LLMConfig) -> bool:
 # TODO move into LLMConfig as a field?
 def requires_auto_tool_choice(llm_config: LLMConfig) -> bool:
     """Certain providers require the tool choice to be set to 'auto'."""
-    if "nebius.com" in llm_config.model_endpoint:
+    endpoint = llm_config.model_endpoint
+    # Combining all in checks for model_endpoint in a tuple for efficiency
+    if (
+        ("nebius.com" in endpoint) or
+        ("together.ai" in endpoint) or
+        ("together.xyz" in endpoint)
+    ):
         return True
-    if "together.ai" in llm_config.model_endpoint or "together.xyz" in llm_config.model_endpoint:
-        return True
-    if llm_config.handle and "vllm" in llm_config.handle:
+    handle = llm_config.handle
+    # "vllm" check after verifying handle is not None/empty
+    if handle and "vllm" in handle:
         return True
     return False
 
