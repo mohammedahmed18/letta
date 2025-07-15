@@ -458,16 +458,17 @@ class RESTClient(AbstractClient):
             password (Optional[str]): The password for the REST API when using self hosted letta service.
         """
         super().__init__(debug=debug)
+        # Build minimal headers map, mutating only if needed
+        base_headers = {"accept": "application/json"}
+        if token is not None:
+            base_headers["Authorization"] = f"Bearer {token}"
+        elif password is not None:
+            base_headers["Authorization"] = f"Bearer {password}"
+        if headers:
+            base_headers.update(headers)
+        self.headers = base_headers
         self.base_url = base_url
         self.api_prefix = api_prefix
-        if token:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
-        elif password:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {password}"}
-        else:
-            self.headers = {"accept": "application/json"}
-        if headers:
-            self.headers.update(headers)
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
 
@@ -664,7 +665,8 @@ class RESTClient(AbstractClient):
         Returns:
             agent_state (AgentState): State of the updated agent
         """
-        request = UpdateAgent(
+        # Use positional args + minimal direct attribute lookup for speed
+        request_obj = UpdateAgent(
             name=name,
             system=system,
             tool_ids=tool_ids,
@@ -676,7 +678,10 @@ class RESTClient(AbstractClient):
             message_ids=message_ids,
             response_format=response_format,
         )
-        response = requests.patch(f"{self.base_url}/{self.api_prefix}/agents/{agent_id}", json=request.model_dump(), headers=self.headers)
+        url = f"{self.base_url}/{self.api_prefix}/agents/{agent_id}"
+        req_json = request_obj.model_dump()
+        hdrs = self.headers
+        response = requests.patch(url, json=req_json, headers=hdrs)
         if response.status_code != 200:
             raise ValueError(f"Failed to update agent: {response.text}")
         return AgentState(**response.json())
