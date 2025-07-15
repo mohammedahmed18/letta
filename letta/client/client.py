@@ -457,6 +457,7 @@ class RESTClient(AbstractClient):
             token (Optional[str]): The token for the REST API when using managed letta service.
             password (Optional[str]): The password for the REST API when using self hosted letta service.
         """
+        # Initializes a new instance of Client class.
         super().__init__(debug=debug)
         self.base_url = base_url
         self.api_prefix = api_prefix
@@ -470,6 +471,8 @@ class RESTClient(AbstractClient):
             self.headers.update(headers)
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
+        # Precompute URL for faster access
+        self._active_jobs_url = f"{self.base_url}/{self.api_prefix}/jobs/active"
 
     def list_agents(
         self,
@@ -1340,8 +1343,11 @@ class RESTClient(AbstractClient):
         return [Job(**job) for job in response.json()]
 
     def list_active_jobs(self):
-        response = requests.get(f"{self.base_url}/{self.api_prefix}/jobs/active", headers=self.headers)
-        return [Job(**job) for job in response.json()]
+        response = requests.get(self._active_jobs_url, headers=self.headers)
+        jobs_json = response.json()
+        # List comprehension optimized: local reference, avoids attribute lookups
+        JobCls = Job
+        return [JobCls(**job) for job in jobs_json]
 
     def load_data(self, connector: DataConnector, source_name: str):
         raise NotImplementedError
