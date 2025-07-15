@@ -70,33 +70,28 @@ class ToolRulesSolver(BaseModel):
             **kwargs,
         )
 
+        # Use a mapping to reduce repetitive isinstance checks and getattr calls
         if tool_rules:
+            attr_map = {
+                ToolRuleType.run_first:    (InitToolRule,           self.init_tool_rules.append),
+                ToolRuleType.constrain_child_tools: (ChildToolRule, self.child_based_tool_rules.append),
+                ToolRuleType.conditional:  (ConditionalToolRule,    self.child_based_tool_rules.append),
+                ToolRuleType.exit_loop:    (TerminalToolRule,       self.terminal_tool_rules.append),
+                ToolRuleType.continue_loop:(ContinueToolRule,       self.continue_tool_rules.append),
+                ToolRuleType.max_count_per_step: (MaxCountPerStepToolRule, self.child_based_tool_rules.append),
+                ToolRuleType.parent_last_tool: (ParentToolRule,      self.parent_tool_rules.append),
+                ToolRuleType.required_before_exit: (RequiredBeforeExitToolRule, self.required_before_exit_tool_rules.append),
+            }
+
+            validate_conditional = self.validate_conditional_tool
             for rule in tool_rules:
-                if rule.type == ToolRuleType.run_first:
-                    assert isinstance(rule, InitToolRule)
-                    self.init_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.constrain_child_tools:
-                    assert isinstance(rule, ChildToolRule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.conditional:
-                    assert isinstance(rule, ConditionalToolRule)
-                    self.validate_conditional_tool(rule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.exit_loop:
-                    assert isinstance(rule, TerminalToolRule)
-                    self.terminal_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.continue_loop:
-                    assert isinstance(rule, ContinueToolRule)
-                    self.continue_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.max_count_per_step:
-                    assert isinstance(rule, MaxCountPerStepToolRule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.parent_last_tool:
-                    assert isinstance(rule, ParentToolRule)
-                    self.parent_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.required_before_exit:
-                    assert isinstance(rule, RequiredBeforeExitToolRule)
-                    self.required_before_exit_tool_rules.append(rule)
+                t = rule.type
+                assert t in attr_map
+                expected_type, adder = attr_map[t]
+                assert isinstance(rule, expected_type)
+                if t is ToolRuleType.conditional:
+                    validate_conditional(rule)
+                adder(rule)
 
     def register_tool_call(self, tool_name: str):
         """Update the internal state to track tool call history."""
@@ -153,18 +148,19 @@ class ToolRulesSolver(BaseModel):
 
     def has_required_tools_been_called(self, available_tools: Set[str]) -> bool:
         """Check if all required-before-exit tools have been called."""
-        return len(self.get_uncalled_required_tools(available_tools=available_tools)) == 0
+        # Fastest path: avoid list allocation/len if none required
+        if not self.required_before_exit_tool_rules:
+            return True
+        return len(self.get_uncalled_required_tools(available_tools)) == 0
 
     def get_uncalled_required_tools(self, available_tools: Set[str]) -> List[str]:
         """Get the list of required-before-exit tools that have not been called yet."""
         if not self.required_before_exit_tool_rules:
             return []  # No required tools means no uncalled tools
-
         required_tool_names = {rule.tool_name for rule in self.required_before_exit_tool_rules}
-        called_tool_names = set(self.tool_call_history)
-
-        # Get required tools that are uncalled AND available
-        return list((required_tool_names & available_tools) - called_tool_names)
+        # Immediately discard already-called tools by set subtraction
+        uncalled = (required_tool_names & available_tools) - set(self.tool_call_history)
+        return list(uncalled)
 
     def get_ending_tool_names(self) -> List[str]:
         """Get the names of tools that are required before exit."""
