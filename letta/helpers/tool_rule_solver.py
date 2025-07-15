@@ -46,7 +46,6 @@ class ToolRulesSolver(BaseModel):
         default_factory=list, description="Tool rules that must be called before the agent can exit."
     )
     tool_call_history: List[str] = Field(default_factory=list, description="History of tool calls, updated with each tool call.")
-
     def __init__(
         self,
         tool_rules: Optional[List[BaseToolRule]] = None,
@@ -59,44 +58,72 @@ class ToolRulesSolver(BaseModel):
         tool_call_history: Optional[List[str]] = None,
         **kwargs,
     ):
+        # Use default lists if None (avoids repeated or)
+        init_tool_rules = init_tool_rules if init_tool_rules is not None else []
+        continue_tool_rules = continue_tool_rules if continue_tool_rules is not None else []
+        child_based_tool_rules = child_based_tool_rules if child_based_tool_rules is not None else []
+        parent_tool_rules = parent_tool_rules if parent_tool_rules is not None else []
+        terminal_tool_rules = terminal_tool_rules if terminal_tool_rules is not None else []
+        required_before_exit_tool_rules = required_before_exit_tool_rules if required_before_exit_tool_rules is not None else []
+        tool_call_history = tool_call_history if tool_call_history is not None else []
+
         super().__init__(
-            init_tool_rules=init_tool_rules or [],
-            continue_tool_rules=continue_tool_rules or [],
-            child_based_tool_rules=child_based_tool_rules or [],
-            parent_tool_rules=parent_tool_rules or [],
-            terminal_tool_rules=terminal_tool_rules or [],
-            required_before_exit_tool_rules=required_before_exit_tool_rules or [],
-            tool_call_history=tool_call_history or [],
+            init_tool_rules=init_tool_rules,
+            continue_tool_rules=continue_tool_rules,
+            child_based_tool_rules=child_based_tool_rules,
+            parent_tool_rules=parent_tool_rules,
+            terminal_tool_rules=terminal_tool_rules,
+            required_before_exit_tool_rules=required_before_exit_tool_rules,
+            tool_call_history=tool_call_history,
             **kwargs,
         )
 
         if tool_rules:
+            # Pull out local list.append for speed and avoid repeated getattr
+            init_tool_rules_append = self.init_tool_rules.append
+            child_based_tool_rules_append = self.child_based_tool_rules.append
+            continue_tool_rules_append = self.continue_tool_rules.append
+            parent_tool_rules_append = self.parent_tool_rules.append
+            terminal_tool_rules_append = self.terminal_tool_rules.append
+            required_before_exit_tool_rules_append = self.required_before_exit_tool_rules.append
+
+            ToolRuleType_run_first = ToolRuleType.run_first
+            ToolRuleType_constrain_child_tools = ToolRuleType.constrain_child_tools
+            ToolRuleType_conditional = ToolRuleType.conditional
+            ToolRuleType_exit_loop = ToolRuleType.exit_loop
+            ToolRuleType_continue_loop = ToolRuleType.continue_loop
+            ToolRuleType_max_count_per_step = ToolRuleType.max_count_per_step
+            ToolRuleType_parent_last_tool = ToolRuleType.parent_last_tool
+            ToolRuleType_required_before_exit = ToolRuleType.required_before_exit
+
             for rule in tool_rules:
-                if rule.type == ToolRuleType.run_first:
+                rule_type = rule.type
+                if rule_type == ToolRuleType_run_first:
+                    # Only valid if rule is InitToolRule
                     assert isinstance(rule, InitToolRule)
-                    self.init_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.constrain_child_tools:
+                    init_tool_rules_append(rule)
+                elif rule_type == ToolRuleType_constrain_child_tools:
                     assert isinstance(rule, ChildToolRule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.conditional:
+                    child_based_tool_rules_append(rule)
+                elif rule_type == ToolRuleType_conditional:
                     assert isinstance(rule, ConditionalToolRule)
                     self.validate_conditional_tool(rule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.exit_loop:
+                    child_based_tool_rules_append(rule)
+                elif rule_type == ToolRuleType_exit_loop:
                     assert isinstance(rule, TerminalToolRule)
-                    self.terminal_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.continue_loop:
+                    terminal_tool_rules_append(rule)
+                elif rule_type == ToolRuleType_continue_loop:
                     assert isinstance(rule, ContinueToolRule)
-                    self.continue_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.max_count_per_step:
+                    continue_tool_rules_append(rule)
+                elif rule_type == ToolRuleType_max_count_per_step:
                     assert isinstance(rule, MaxCountPerStepToolRule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.parent_last_tool:
+                    child_based_tool_rules_append(rule)
+                elif rule_type == ToolRuleType_parent_last_tool:
                     assert isinstance(rule, ParentToolRule)
-                    self.parent_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.required_before_exit:
+                    parent_tool_rules_append(rule)
+                elif rule_type == ToolRuleType_required_before_exit:
                     assert isinstance(rule, RequiredBeforeExitToolRule)
-                    self.required_before_exit_tool_rules.append(rule)
+                    required_before_exit_tool_rules_append(rule)
 
     def register_tool_call(self, tool_name: str):
         """Update the internal state to track tool call history."""
@@ -168,7 +195,9 @@ class ToolRulesSolver(BaseModel):
 
     def get_ending_tool_names(self) -> List[str]:
         """Get the names of tools that are required before exit."""
-        return [rule.tool_name for rule in self.required_before_exit_tool_rules]
+        # Use local ref for attribute (micro-opto); preserves return type
+        rules = self.required_before_exit_tool_rules
+        return [rule.tool_name for rule in rules]
 
     def compile_tool_rule_prompts(self) -> Optional[Block]:
         """
