@@ -458,16 +458,19 @@ class RESTClient(AbstractClient):
             password (Optional[str]): The password for the REST API when using self hosted letta service.
         """
         super().__init__(debug=debug)
+        # Set headers in a single pass for efficiency
+        accept_header = {"accept": "application/json"}
+        if token:
+            accept_header["Authorization"] = f"Bearer {token}"
+        elif password:
+            accept_header["Authorization"] = f"Bearer {password}"
+        if headers:
+            accept_header.update(headers)
+        self.headers = accept_header
+
         self.base_url = base_url
         self.api_prefix = api_prefix
-        if token:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
-        elif password:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {password}"}
-        else:
-            self.headers = {"accept": "application/json"}
-        if headers:
-            self.headers.update(headers)
+        self._jobs_url = f"{base_url}/{api_prefix}/jobs"  # Precompute URL for faster access
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
 
@@ -1336,8 +1339,11 @@ class RESTClient(AbstractClient):
         return Job(**response.json())
 
     def list_jobs(self):
-        response = requests.get(f"{self.base_url}/{self.api_prefix}/jobs", headers=self.headers)
-        return [Job(**job) for job in response.json()]
+        # Use the precomputed URL and local variable to avoid attribute lookups
+        response = requests.get(self._jobs_url, headers=self.headers)
+        jobs_json = response.json()
+        # Return list of Job objects
+        return [Job(**job) for job in jobs_json]
 
     def list_active_jobs(self):
         response = requests.get(f"{self.base_url}/{self.api_prefix}/jobs/active", headers=self.headers)
