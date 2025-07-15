@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 from typing import List, Optional
 
@@ -54,10 +55,10 @@ def accepts_developer_role(model: str) -> bool:
 
     See: https://community.openai.com/t/developer-role-not-accepted-for-o1-o1-mini-o3-mini/1110750/7
     """
-    if is_openai_reasoning_model(model) and not "o1-mini" in model or "o1-preview" in model:
-        return True
-    else:
-        return False
+    # Optimization: Remove unnecessary branches. Reuse literal check logic.
+    return is_openai_reasoning_model(model) and (
+        "o1-mini" not in model and "o1-preview" not in model
+    )
 
 
 def supports_temperature_param(model: str) -> bool:
@@ -65,10 +66,7 @@ def supports_temperature_param(model: str) -> bool:
 
     Example error: 400 - {'error': {'message': "Unsupported parameter: 'temperature' is not supported with this model.", 'type': 'invalid_request_error', 'param': 'temperature', 'code': 'unsupported_parameter'}}
     """
-    if is_openai_reasoning_model(model):
-        return False
-    else:
-        return True
+    return not is_openai_reasoning_model(model)
 
 
 def supports_parallel_tool_calling(model: str) -> bool:
@@ -83,23 +81,19 @@ def supports_parallel_tool_calling(model: str) -> bool:
 # TODO move into LLMConfig as a field?
 def supports_structured_output(llm_config: LLMConfig) -> bool:
     """Certain providers don't support structured output."""
-
-    # FIXME pretty hacky - turn off for providers we know users will use,
-    #       but also don't support structured output
-    if "nebius.com" in llm_config.model_endpoint:
-        return False
-    else:
-        return True
+    return "nebius.com" not in llm_config.model_endpoint
 
 
 # TODO move into LLMConfig as a field?
 def requires_auto_tool_choice(llm_config: LLMConfig) -> bool:
     """Certain providers require the tool choice to be set to 'auto'."""
-    if "nebius.com" in llm_config.model_endpoint:
+    me = llm_config.model_endpoint
+    handle = llm_config.handle
+    if "nebius.com" in me:
         return True
-    if "together.ai" in llm_config.model_endpoint or "together.xyz" in llm_config.model_endpoint:
+    if "together.ai" in me or "together.xyz" in me:
         return True
-    if llm_config.handle and "vllm" in llm_config.handle:
+    if handle and "vllm" in handle:
         return True
     return False
 

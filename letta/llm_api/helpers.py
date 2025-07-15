@@ -1,4 +1,4 @@
-import copy
+from __future__ import annotations
 import json
 import warnings
 from collections import OrderedDict
@@ -81,29 +81,31 @@ def convert_to_structured_output(openai_function: dict, allow_optional: bool = F
         },
     }
 
-    for param, details in openai_function["parameters"]["properties"].items():
+    properties = openai_function["parameters"]["properties"]
+    result_props = structured_output["parameters"]["properties"]
+    for param, details in properties.items():
         param_type = details["type"]
         param_description = details.get("description", "")
 
         if param_type == "object":
             if "properties" not in details:
                 raise ValueError(f"Property {param} of type object is missing 'properties'")
-            structured_output["parameters"]["properties"][param] = {
+            sub_props = details["properties"]
+            result_props[param] = {
                 "type": "object",
                 "description": param_description,
-                "properties": {k: _convert_to_structured_output_helper(v) for k, v in details["properties"].items()},
+                "properties": {k: _convert_to_structured_output_helper(v) for k, v in sub_props.items()},
                 "additionalProperties": False,
-                "required": list(details["properties"].keys()),
+                "required": list(sub_props.keys()),
             }
 
         elif param_type == "array":
             items_schema = details.get("items")
             prefix_items_schema = details.get("prefixItems")
-
             if prefix_items_schema:
                 # assume fixed-length tuple — safe fallback to use first type for items
                 fallback_item = prefix_items_schema[0] if isinstance(prefix_items_schema, list) else prefix_items_schema
-                structured_output["parameters"]["properties"][param] = {
+                result_props[param] = {
                     "type": "array",
                     "description": param_description,
                     "prefixItems": [_convert_to_structured_output_helper(item) for item in prefix_items_schema],
@@ -112,7 +114,7 @@ def convert_to_structured_output(openai_function: dict, allow_optional: bool = F
                     "maxItems": details.get("maxItems", len(prefix_items_schema)),
                 }
             elif items_schema:
-                structured_output["parameters"]["properties"][param] = {
+                result_props[param] = {
                     "type": "array",
                     "description": param_description,
                     "items": _convert_to_structured_output_helper(items_schema),
@@ -127,10 +129,10 @@ def convert_to_structured_output(openai_function: dict, allow_optional: bool = F
             }
             if "enum" in details:
                 prop["enum"] = details["enum"]
-            structured_output["parameters"]["properties"][param] = prop
+            result_props[param] = prop
 
     if not allow_optional:
-        structured_output["parameters"]["required"] = list(structured_output["parameters"]["properties"].keys())
+        structured_output["parameters"]["required"] = list(result_props.keys())
     else:
         raise NotImplementedError("Optional parameter handling is not implemented.")
 
@@ -208,33 +210,50 @@ def add_inner_thoughts_to_functions(
     put_inner_thoughts_first: bool = True,
 ) -> List[dict]:
     """Add an inner_thoughts kwarg to every function in the provided list, ensuring it's the first parameter"""
+    # Optimization: try to minimize deepcopies, only copy at the dict structure level needed
+
     new_functions = []
     for function_object in functions:
-        new_function_object = copy.deepcopy(function_object)
-        new_properties = OrderedDict()
-
-        # For chat completions, we want inner thoughts to come later
-        if put_inner_thoughts_first:
-            # Create with inner_thoughts as the first item
-            new_properties[inner_thoughts_key] = {
-                "type": "string",
-                "description": inner_thoughts_description,
-            }
-            # Add the rest of the properties
-            new_properties.update(function_object["parameters"]["properties"])
+        # Shallow copy of top level dict, deep copy parameters/properties only
+        param_dict = function_object["parameters"]
+        orig_props = param_dict["properties"]
+        if isinstance(orig_props, OrderedDict):  # preserve ordering if present
+            new_properties = OrderedDict()
         else:
-            new_properties.update(function_object["parameters"]["properties"])
+            new_properties = {}
+
+        # Insert inner thoughts key either first or last
+        if put_inner_thoughts_first:
+            new_properties[inner_thoughts_key] = {
+                "type": "string",
+                "description": inner_thoughts_description,
+            }
+            if isinstance(orig_props, OrderedDict):
+                new_properties.update(orig_props)
+            else:  # normal dict, this preserves insertion order in py3.7+
+                for k, v in orig_props.items():
+                    new_properties[k] = v
+        else:
+            if isinstance(orig_props, OrderedDict):
+                new_properties.update(orig_props)
+            else:
+                for k, v in orig_props.items():
+                    new_properties[k] = v
             new_properties[inner_thoughts_key] = {
                 "type": "string",
                 "description": inner_thoughts_description,
             }
 
-        # Cast OrderedDict back to a regular dict
-        new_function_object["parameters"]["properties"] = dict(new_properties)
+        # Only deep copy the parameter/value dicts if needed
+        new_function_object = function_object.copy()
+        new_function_object["parameters"] = param_dict.copy()
+        new_function_object["parameters"]["properties"] = (
+            dict(new_properties) if not isinstance(orig_props, OrderedDict) else new_properties
+        )
 
         # Update required parameters if necessary
         if inner_thoughts_required:
-            required_params = new_function_object["parameters"].get("required", [])
+            required_params = list(new_function_object["parameters"].get("required", []))
             if inner_thoughts_key not in required_params:
                 if put_inner_thoughts_first:
                     required_params.insert(0, inner_thoughts_key)

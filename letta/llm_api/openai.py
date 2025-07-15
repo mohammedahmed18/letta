@@ -1,3 +1,4 @@
+from __future__ import annotations
 import warnings
 from typing import Generator, List, Optional, Union
 
@@ -180,9 +181,10 @@ def build_openai_chat_completions_request(
 ) -> ChatCompletionRequest:
     if functions and llm_config.put_inner_thoughts_in_kwargs:
         # Special case for LM Studio backend since it needs extra guidance to force out the thoughts first
-        # TODO(fix)
         inner_thoughts_desc = (
-            INNER_THOUGHTS_KWARG_DESCRIPTION_GO_FIRST if ":1234" in llm_config.model_endpoint else INNER_THOUGHTS_KWARG_DESCRIPTION
+            INNER_THOUGHTS_KWARG_DESCRIPTION_GO_FIRST
+            if ":1234" in llm_config.model_endpoint
+            else INNER_THOUGHTS_KWARG_DESCRIPTION
         )
         functions = add_inner_thoughts_to_functions(
             functions=functions,
@@ -191,23 +193,23 @@ def build_openai_chat_completions_request(
             put_inner_thoughts_first=put_inner_thoughts_first,
         )
 
-    use_developer_message = accepts_developer_role(llm_config.model)
-
+    use_developer = accepts_developer_role(llm_config.model)
     openai_message_list = [
         cast_message_to_subtype(
             m.to_openai_dict(
                 put_inner_thoughts_in_kwargs=llm_config.put_inner_thoughts_in_kwargs,
-                use_developer_message=use_developer_message,
+                use_developer_message=use_developer,
             )
         )
         for m in messages
     ]
 
-    if llm_config.model:
-        model = llm_config.model
-    else:
+    model = llm_config.model
+    if not model:
         warnings.warn(f"Model type not set in llm_config: {llm_config.model_dump_json(indent=4)}")
         model = None
+
+    temperature = llm_config.temperature if supports_temperature_param(model) else 1.0
 
     if use_tool_naming:
         if function_call is None:
@@ -215,10 +217,7 @@ def build_openai_chat_completions_request(
         elif function_call not in ["none", "auto", "required"]:
             tool_choice = ToolFunctionChoice(type="function", function=ToolFunctionChoiceFunctionCall(name=function_call))
         else:
-            if requires_auto_tool_choice(llm_config):
-                tool_choice = "auto"
-            else:
-                tool_choice = function_call
+            tool_choice = "auto" if requires_auto_tool_choice(llm_config) else function_call
         data = ChatCompletionRequest(
             model=model,
             messages=openai_message_list,
@@ -226,7 +225,7 @@ def build_openai_chat_completions_request(
             tool_choice=tool_choice,
             user=str(user_id),
             max_completion_tokens=llm_config.max_tokens,
-            temperature=llm_config.temperature if supports_temperature_param(model) else 1.0,
+            temperature=temperature,
             reasoning_effort=llm_config.reasoning_effort,
         )
     else:
@@ -237,13 +236,9 @@ def build_openai_chat_completions_request(
             function_call=function_call,
             user=str(user_id),
             max_completion_tokens=llm_config.max_tokens,
-            temperature=llm_config.temperature if supports_temperature_param(model) else 1.0,
+            temperature=temperature,
             reasoning_effort=llm_config.reasoning_effort,
         )
-        # https://platform.openai.com/docs/guides/text-generation/json-mode
-        # only supported by gpt-4o, gpt-4-turbo, or gpt-3.5-turbo
-        # if "gpt-4o" in llm_config.model or "gpt-4-turbo" in llm_config.model or "gpt-3.5-turbo" in llm_config.model:
-        # data.response_format = {"type": "json_object"}
 
     # always set user id for openai requests
     if user_id:
@@ -251,23 +246,19 @@ def build_openai_chat_completions_request(
 
     if llm_config.model_endpoint == LETTA_MODEL_ENDPOINT:
         if not user_id:
-            # override user id for inference.letta.com
             import uuid
-
             data.user = str(uuid.UUID(int=0))
-
         data.model = "memgpt-openai"
 
-    if use_structured_output and data.tools is not None and len(data.tools) > 0:
-        # Convert to structured output style (which has 'strict' and no optionals)
-        for tool in data.tools:
-            if supports_structured_output(llm_config):
+    if use_structured_output and getattr(data, 'tools', None) and data.tools:
+        if supports_structured_output(llm_config):
+            for tool in data.tools:
                 try:
-                    # tool["function"] = convert_to_structured_output(tool["function"])
                     structured_output_version = convert_to_structured_output(tool.function.model_dump())
                     tool.function = FunctionSchema(**structured_output_version)
                 except ValueError as e:
                     warnings.warn(f"Failed to convert tool function to structured output, tool={tool}, error={e}")
+
     return data
 
 
