@@ -59,6 +59,7 @@ class ToolRulesSolver(BaseModel):
         tool_call_history: Optional[List[str]] = None,
         **kwargs,
     ):
+        # Use or [] one time per list-arg to reduce branching
         super().__init__(
             init_tool_rules=init_tool_rules or [],
             continue_tool_rules=continue_tool_rules or [],
@@ -71,32 +72,46 @@ class ToolRulesSolver(BaseModel):
         )
 
         if tool_rules:
+            # Localize attr for speed
+            append_init = self.init_tool_rules.append
+            append_child = self.child_based_tool_rules.append
+            append_parent = self.parent_tool_rules.append
+            append_terminal = self.terminal_tool_rules.append
+            append_continue = self.continue_tool_rules.append
+            append_required = self.required_before_exit_tool_rules.append
+
+            # Localize types for speed
+            TRT = ToolRuleType
+
+            # Mapping: ToolRuleType --> (cls, append_func[, validator])
+            rule_map = {
+                TRT.run_first:             (InitToolRule,           append_init),
+                TRT.constrain_child_tools: (ChildToolRule,          append_child),
+                TRT.conditional:           (ConditionalToolRule,    append_child, self.validate_conditional_tool),
+                TRT.exit_loop:             (TerminalToolRule,       append_terminal),
+                TRT.continue_loop:         (ContinueToolRule,       append_continue),
+                TRT.max_count_per_step:    (MaxCountPerStepToolRule,append_child),
+                TRT.parent_last_tool:      (ParentToolRule,         append_parent),
+                TRT.required_before_exit:  (RequiredBeforeExitToolRule, append_required)
+            }
+
             for rule in tool_rules:
-                if rule.type == ToolRuleType.run_first:
-                    assert isinstance(rule, InitToolRule)
-                    self.init_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.constrain_child_tools:
-                    assert isinstance(rule, ChildToolRule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.conditional:
-                    assert isinstance(rule, ConditionalToolRule)
-                    self.validate_conditional_tool(rule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.exit_loop:
-                    assert isinstance(rule, TerminalToolRule)
-                    self.terminal_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.continue_loop:
-                    assert isinstance(rule, ContinueToolRule)
-                    self.continue_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.max_count_per_step:
-                    assert isinstance(rule, MaxCountPerStepToolRule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.parent_last_tool:
-                    assert isinstance(rule, ParentToolRule)
-                    self.parent_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.required_before_exit:
-                    assert isinstance(rule, RequiredBeforeExitToolRule)
-                    self.required_before_exit_tool_rules.append(rule)
+                ttype = rule.type
+                entry = rule_map.get(ttype)
+                if entry is None:
+                    continue  # unknown rule type, ignore
+
+                RuleCls = entry[0]
+                append_func = entry[1]
+
+                # Validate type once per rule
+                assert isinstance(rule, RuleCls)
+
+                # Run validator if present
+                if len(entry) == 3:
+                    entry[2](rule)
+
+                append_func(rule)
 
     def register_tool_call(self, tool_name: str):
         """Update the internal state to track tool call history."""
@@ -149,7 +164,8 @@ class ToolRulesSolver(BaseModel):
 
     def is_continue_tool(self, tool_name):
         """Check if the tool is defined as a continue tool in the tool rules."""
-        return any(rule.tool_name == tool_name for rule in self.continue_tool_rules)
+        # Use generator expression with next() for early exit
+        return next((True for rule in self.continue_tool_rules if rule.tool_name == tool_name), False)
 
     def has_required_tools_been_called(self, available_tools: Set[str]) -> bool:
         """Check if all required-before-exit tools have been called."""
