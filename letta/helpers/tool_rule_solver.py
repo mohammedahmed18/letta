@@ -46,7 +46,6 @@ class ToolRulesSolver(BaseModel):
         default_factory=list, description="Tool rules that must be called before the agent can exit."
     )
     tool_call_history: List[str] = Field(default_factory=list, description="History of tool calls, updated with each tool call.")
-
     def __init__(
         self,
         tool_rules: Optional[List[BaseToolRule]] = None,
@@ -69,7 +68,7 @@ class ToolRulesSolver(BaseModel):
             tool_call_history=tool_call_history or [],
             **kwargs,
         )
-
+        # Mutate lists directly for max speed
         if tool_rules:
             for rule in tool_rules:
                 if rule.type == ToolRuleType.run_first:
@@ -97,6 +96,9 @@ class ToolRulesSolver(BaseModel):
                 elif rule.type == ToolRuleType.required_before_exit:
                     assert isinstance(rule, RequiredBeforeExitToolRule)
                     self.required_before_exit_tool_rules.append(rule)
+
+        # Precompute set of terminal tool names for O(1) lookup in is_terminal_tool
+        self._terminal_tool_names = set(rule.tool_name for rule in self.terminal_tool_rules)
 
     def register_tool_call(self, tool_name: str):
         """Update the internal state to track tool call history."""
@@ -141,7 +143,7 @@ class ToolRulesSolver(BaseModel):
 
     def is_terminal_tool(self, tool_name: str) -> bool:
         """Check if the tool is defined as a terminal tool in the terminal tool rules or required-before-exit tool rules."""
-        return any(rule.tool_name == tool_name for rule in self.terminal_tool_rules)
+        return tool_name in self._terminal_tool_names
 
     def has_children_tools(self, tool_name):
         """Check if the tool has children tools"""
