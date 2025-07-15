@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from datetime import timezone as dt_timezone
 from typing import Callable
 
+import numpy as np
 import pytz
 
 from letta.constants import DEFAULT_TIMEZONE
@@ -104,6 +105,10 @@ def extract_date_from_timestamp(timestamp):
 
 def is_utc_datetime(dt: datetime) -> bool:
     return dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) == timedelta(0)
+
+
+def ns_to_ms_array(ns_array):
+    return np.floor_divide(ns_array, 1_000_000)
 
 
 class AsyncTimer:
