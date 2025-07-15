@@ -470,6 +470,8 @@ class RESTClient(AbstractClient):
             self.headers.update(headers)
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
+        # Precompute frequently used URL to avoid recomputation
+        self._agents_url = f"{self.base_url}/{self.api_prefix}/agents"
 
     def list_agents(
         self,
@@ -479,22 +481,29 @@ class RESTClient(AbstractClient):
         before: Optional[str] = None,
         after: Optional[str] = None,
     ) -> List[AgentState]:
+        # Build parameters only for those that are not None to minimize dictionary operations
         params = {"limit": limit}
         if tags:
             params["tags"] = tags
             params["match_all_tags"] = False
-
-        if query_text:
+        if query_text is not None:
             params["query_text"] = query_text
-
-        if before:
+        if before is not None:
             params["before"] = before
-
-        if after:
+        if after is not None:
             params["after"] = after
 
-        response = requests.get(f"{self.base_url}/{self.api_prefix}/agents", headers=self.headers, params=params)
-        return [AgentState(**agent) for agent in response.json()]
+        # Use precomputed URL and cache frequently-accessed attributes locally to reduce lookup cost
+        url = self._agents_url
+        headers = self.headers
+        response = requests.get(url, headers=headers, params=params)
+        agents_json = response.json()
+        # Optimize list construction using a local variable for AgentState
+        AgentState_ = AgentState
+        # Avoid creating list if json is empty
+        if not agents_json:
+            return []
+        return [AgentState_(**agent) for agent in agents_json]
 
     def agent_exists(self, agent_id: str) -> bool:
         """
