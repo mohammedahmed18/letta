@@ -238,39 +238,50 @@ class FunctionArgumentsStreamHandler:
 
     def process_json_chunk(self, chunk: str) -> Optional[str]:
         """Process a chunk from the function arguments and return the plaintext version"""
-        # Use strip to handle only leading and trailing whitespace in control structures
+        chunk_stripped = chunk.strip()
+
+        # Fast-path for message accumulation
         if self.accumulating:
-            clean_chunk = chunk.strip()
+            # Only use .strip() once
+            clean_chunk = chunk_stripped
+            # Only check if key is now in key_buffer if needed
             if self.json_key in self.key_buffer:
                 if ":" in clean_chunk:
                     self.in_message = True
                     self.accumulating = False
                     return None
+            # Only append if not already done.
             self.key_buffer += clean_chunk
             return None
 
+        # Inside a message, process accordingly
         if self.in_message:
-            if chunk.strip() == '"' and self.message_started:
+            # Handle quoted segment transitions
+            if chunk_stripped == '"' and self.message_started:
                 self.in_message = False
                 self.message_started = False
                 return None
-            if not self.message_started and chunk.strip() == '"':
+            if not self.message_started and chunk_stripped == '"':
                 self.message_started = True
                 return None
             if self.message_started:
-                if chunk.strip().endswith('"'):
+                # Only call endswith and rstrip if likely
+                if chunk_stripped.endswith('"'):
                     self.in_message = False
                     return chunk.rstrip('"\n')
                 return chunk
 
-        if chunk.strip() == "{":
+        # Control block start -- accumulate keys
+        if chunk_stripped == "{":
             self.key_buffer = ""
             self.accumulating = True
             return None
 
-        if chunk.strip() == "}":
+        # Control block end
+        if chunk_stripped == "}":
             self.in_message = False
             self.message_started = False
             return None
 
+        # Default: no message processed
         return None
