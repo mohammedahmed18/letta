@@ -123,16 +123,18 @@ class OpenAIClient(LLMClientBase):
         return kwargs
 
     def _prepare_client_kwargs_embedding(self, embedding_config: EmbeddingConfig) -> dict:
-        api_key = None
+        # Find the correct api_key efficiently
         if embedding_config.embedding_endpoint_type == ProviderType.together:
-            api_key = model_settings.together_api_key or os.environ.get("TOGETHER_API_KEY")
-
+            api_key = model_settings.together_api_key
+            if not api_key:
+                api_key = os.environ.get("TOGETHER_API_KEY")
+        else:
+            api_key = model_settings.openai_api_key
+            if not api_key:
+                api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            api_key = model_settings.openai_api_key or os.environ.get("OPENAI_API_KEY")
-        # supposedly the openai python client requires a dummy API key
-        api_key = api_key or "DUMMY_API_KEY"
-        kwargs = {"api_key": api_key, "base_url": embedding_config.embedding_endpoint}
-        return kwargs
+            api_key = "DUMMY_API_KEY"
+        return {"api_key": api_key, "base_url": embedding_config.embedding_endpoint}
 
     async def _prepare_client_kwargs_async(self, llm_config: LLMConfig) -> dict:
         api_key = None
