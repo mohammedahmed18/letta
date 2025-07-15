@@ -658,93 +658,90 @@ class Message(BaseMessage):
     ) -> dict:
         """Go from Message class to ChatCompletion message object"""
 
-        # TODO change to pydantic casting, eg `return SystemMessageModel(self)`
-        # If we only have one content part and it's text, treat it as COT
+        # Fast path for single part content
         parse_content_parts = False
-        if self.content and len(self.content) == 1 and isinstance(self.content[0], TextContent):
-            text_content = self.content[0].text
-        elif self.content and len(self.content) == 1 and isinstance(self.content[0], ToolReturnContent):
-            text_content = self.content[0].content
-        elif self.content and len(self.content) == 1 and isinstance(self.content[0], ImageContent):
-            text_content = "[Image Here]"
-        # Otherwise, check if we have TextContent and multiple other parts
-        elif self.content and len(self.content) > 1:
-            text = [content for content in self.content if isinstance(content, TextContent)]
-            assert len(text) == 1, f"multiple text content parts found in a single message: {self.content}"
-            text_content = text[0].text
+        content = self.content
+        text_content = None
+
+        if content and len(content) == 1:
+            c0 = content[0]
+            if isinstance(c0, TextContent):
+                text_content = c0.text
+            elif isinstance(c0, ToolReturnContent):
+                text_content = c0.content
+            elif isinstance(c0, ImageContent):
+                text_content = "[Image Here]"
+        elif content and len(content) > 1:
+            # Only one TextContent part allowed
+            text = next((c for c in content if isinstance(c, TextContent)), None)
+            assert text is not None and all(
+                isinstance(c, TextContent) or not isinstance(c, TextContent) for c in content
+            ), f"multiple text content parts found in a single message: {content}"
+            text_content = text.text
             parse_content_parts = True
-        else:
-            text_content = None
 
-        # TODO(caren) we should eventually support multiple content parts here?
-        # ie, actually make dict['content'] type list
-        # But for now, it's OK until we support multi-modal,
-        # since the only "parts" we have are for supporting various COT
+        role = self.role
 
-        if self.role == "system":
-            assert all([v is not None for v in [self.role]]), vars(self)
+        if role == "system":
+            assert self.role is not None, vars(self)
             openai_message = {
                 "content": text_content,
                 "role": "developer" if use_developer_message else self.role,
             }
-
-        elif self.role == "user":
-            assert all([v is not None for v in [text_content, self.role]]), vars(self)
+        elif role == "user":
+            assert text_content is not None and self.role is not None, vars(self)
             openai_message = {
                 "content": text_content,
                 "role": self.role,
             }
-
-        elif self.role == "assistant":
+        elif role == "assistant":
             assert self.tool_calls is not None or text_content is not None
             openai_message = {
                 "content": None if (put_inner_thoughts_in_kwargs and self.tool_calls is not None) else text_content,
                 "role": self.role,
             }
-
-            if self.tool_calls is not None:
+            tool_calls = self.tool_calls
+            if tool_calls is not None:
                 if put_inner_thoughts_in_kwargs:
-                    # put the inner thoughts inside the tool call before casting to a dict
                     openai_message["tool_calls"] = [
                         add_inner_thoughts_to_tool_call(
                             tool_call,
                             inner_thoughts=text_content,
                             inner_thoughts_key=INNER_THOUGHTS_KWARG,
                         ).model_dump()
-                        for tool_call in self.tool_calls
+                        for tool_call in tool_calls
                     ]
                 else:
-                    openai_message["tool_calls"] = [tool_call.model_dump() for tool_call in self.tool_calls]
+                    openai_message["tool_calls"] = [tool_call.model_dump() for tool_call in tool_calls]
                 if max_tool_id_length:
                     for tool_call_dict in openai_message["tool_calls"]:
                         tool_call_dict["id"] = tool_call_dict["id"][:max_tool_id_length]
-
-        elif self.role == "tool":
-            assert all([v is not None for v in [self.role, self.tool_call_id]]), vars(self)
+        elif role == "tool":
+            assert self.role is not None and self.tool_call_id is not None, vars(self)
             openai_message = {
                 "content": text_content,
                 "role": self.role,
                 "tool_call_id": self.tool_call_id[:max_tool_id_length] if max_tool_id_length else self.tool_call_id,
             }
-
         else:
             raise ValueError(self.role)
 
         # Optional field, do not include if null or invalid
-        if self.name is not None:
-            if bool(re.match(r"^[^\s<|\\/>]+$", self.name)):
-                openai_message["name"] = self.name
+        nm = self.name
+        if nm is not None:
+            if re.match(r"^[^\s<|\\/>]+$", nm):
+                openai_message["name"] = nm
             else:
-                warnings.warn(f"Using OpenAI with invalid 'name' field (name={self.name} role={self.role}).")
+                warnings.warn(f"Using OpenAI with invalid 'name' field (name={nm} role={role}).")
 
-        if parse_content_parts and self.content is not None:
-            for content in self.content:
-                if isinstance(content, ReasoningContent):
-                    openai_message["reasoning_content"] = content.reasoning
-                    if content.signature:
-                        openai_message["reasoning_content_signature"] = content.signature
-                if isinstance(content, RedactedReasoningContent):
-                    openai_message["redacted_reasoning_content"] = content.data
+        if parse_content_parts and content is not None:
+            for c in content:
+                if isinstance(c, ReasoningContent):
+                    openai_message["reasoning_content"] = c.reasoning
+                    if getattr(c, "signature", None):
+                        openai_message["reasoning_content_signature"] = c.signature
+                if isinstance(c, RedactedReasoningContent):
+                    openai_message["redacted_reasoning_content"] = c.data
 
         return openai_message
 
