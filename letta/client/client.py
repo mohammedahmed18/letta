@@ -460,14 +460,20 @@ class RESTClient(AbstractClient):
         super().__init__(debug=debug)
         self.base_url = base_url
         self.api_prefix = api_prefix
+
+        # Avoid repeated header construction
+        _headers = {"accept": "application/json"}
         if token:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
+            _headers["Authorization"] = f"Bearer {token}"
         elif password:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {password}"}
-        else:
-            self.headers = {"accept": "application/json"}
+            _headers["Authorization"] = f"Bearer {password}"
         if headers:
-            self.headers.update(headers)
+            _headers.update(headers)
+        self.headers = _headers
+
+        # Precompute invariant URL prefix for speed
+        self._agents_url_prefix = f"{self.base_url}/{self.api_prefix}/agents"
+
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
 
@@ -1941,12 +1947,19 @@ class RESTClient(AbstractClient):
             agent_id (str): ID of the agent
             block_id (str): ID of the block to attach
         """
+        # Local refs for faster lookup
+        url = f"{self._agents_url_prefix}/{agent_id}/core-memory/blocks/attach/{block_id}"
+        headers = self.headers
+
         response = requests.patch(
-            f"{self.base_url}/{self.api_prefix}/agents/{agent_id}/core-memory/blocks/attach/{block_id}",
-            headers=self.headers,
+            url,
+            headers=headers,
         )
+
         if response.status_code != 200:
             raise ValueError(f"Failed to attach block to agent: {response.text}")
+
+        # Fastest possible parse/construct for this API - can't be optimized further without changing `AgentState`
         return AgentState(**response.json())
 
     def detach_block(self, agent_id: str, block_id: str) -> AgentState:
