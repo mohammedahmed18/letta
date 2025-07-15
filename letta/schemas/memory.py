@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, List, Optional
 from jinja2 import Template, TemplateSyntaxError
 from pydantic import BaseModel, Field, field_validator
 
+from letta.schemas.block import Block
+
 # Forward referencing to avoid circular import with Agent -> Memory -> Agent
 if TYPE_CHECKING:
     pass
@@ -165,11 +167,12 @@ class Memory(BaseModel, validate_assignment=True):
 
     def set_block(self, block: Block):
         """Set a block in the memory object"""
-        for i, b in enumerate(self.blocks):
-            if b.label == block.label:
-                self.blocks[i] = block
-                return
-        self.blocks.append(block)
+        idx = self._block_index.get(block.label)
+        if idx is not None:
+            self.blocks[idx] = block
+        else:
+            self.blocks.append(block)
+            self._block_index[block.label] = len(self.blocks) - 1
 
     def update_block_value(self, label: str, value: str):
         """Update the value of a block"""
@@ -181,6 +184,11 @@ class Memory(BaseModel, validate_assignment=True):
                 block.value = value
                 return
         raise ValueError(f"Block with label {label} does not exist")
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Build a mapping from block labels to their indices for fast lookup
+        self._block_index = {b.label: i for i, b in enumerate(getattr(self, "blocks", []))}
 
 
 # TODO: ideally this is refactored into ChatMemory and the subclasses are given more specific names.
