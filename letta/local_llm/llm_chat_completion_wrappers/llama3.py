@@ -2,6 +2,7 @@ from letta.errors import LLMJSONParsingError
 from letta.helpers.json_helpers import json_dumps, json_loads
 from letta.local_llm.json_parser import clean_json
 from letta.local_llm.llm_chat_completion_wrappers.wrapper_base import LLMChatCompletionWrapper
+from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
 
 PREFIX_HINT = """# Reminders:
 # Important information about yourself and the user is stored in (limited) core memory
@@ -67,19 +68,19 @@ class LLaMA3InnerMonologueWrapper(LLMChatCompletionWrapper):
     def _compile_function_description(self, schema, add_inner_thoughts=True) -> str:
         """Go from a JSON schema to a string description for a prompt"""
         # airorobos style
-        func_str = ""
-        func_str += f"{schema['name']}:"
-        func_str += f"\n  description: {schema['description']}"
-        func_str += "\n  params:"
+        func_lines = []
+        func_lines.append(f"{schema['name']}:")
+        func_lines.append(f"\n  description: {schema['description']}")
+        func_lines.append("\n  params:")
         if add_inner_thoughts:
-            from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
-
-            func_str += f"\n    {INNER_THOUGHTS_KWARG}: {INNER_THOUGHTS_KWARG_DESCRIPTION}"
-        for param_k, param_v in schema["parameters"]["properties"].items():
+            func_lines.append(f"\n    {INNER_THOUGHTS_KWARG}: {INNER_THOUGHTS_KWARG_DESCRIPTION}")
+        parameters_props = schema["parameters"]["properties"]
+        # Keep inside local variable for speed
+        for param_k, param_v in parameters_props.items():
             # TODO we're ignoring type
-            func_str += f"\n    {param_k}: {param_v['description']}"
+            func_lines.append(f"\n    {param_k}: {param_v['description']}")
         # TODO we're ignoring schema['parameters']['required']
-        return func_str
+        return "".join(func_lines)
 
     def _compile_function_block(self, functions) -> str:
         """functions dict -> string describing functions choices"""
