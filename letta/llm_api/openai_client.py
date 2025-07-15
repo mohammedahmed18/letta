@@ -45,8 +45,7 @@ def is_openai_reasoning_model(model: str) -> bool:
     """Utility function to check if the model is a 'reasoner'"""
 
     # NOTE: needs to be updated with new model releases
-    is_reasoning = model.startswith("o1") or model.startswith("o3") or model.startswith("o4")
-    return is_reasoning
+    return model.startswith(("o1", "o3", "o4"))
 
 
 def accepts_developer_role(model: str) -> bool:
@@ -65,10 +64,7 @@ def supports_temperature_param(model: str) -> bool:
 
     Example error: 400 - {'error': {'message': "Unsupported parameter: 'temperature' is not supported with this model.", 'type': 'invalid_request_error', 'param': 'temperature', 'code': 'unsupported_parameter'}}
     """
-    if is_openai_reasoning_model(model):
-        return False
-    else:
-        return True
+    return not is_openai_reasoning_model(model)
 
 
 def supports_parallel_tool_calling(model: str) -> bool:
