@@ -460,14 +460,20 @@ class RESTClient(AbstractClient):
         super().__init__(debug=debug)
         self.base_url = base_url
         self.api_prefix = api_prefix
+
+        # Precompute base headers and update if custom headers are present
         if token:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
+            base_headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
         elif password:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {password}"}
+            base_headers = {"accept": "application/json", "Authorization": f"Bearer {password}"}
         else:
-            self.headers = {"accept": "application/json"}
+            base_headers = {"accept": "application/json"}
         if headers:
-            self.headers.update(headers)
+            base_headers.update(headers)
+        self.headers = base_headers
+
+        # Precompute frequently used endpoint patterns for speed
+        self._sources_url_template = f"{self.base_url}/{self.api_prefix}/sources/{{}}"
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
 
@@ -1449,11 +1455,20 @@ class RESTClient(AbstractClient):
         Returns:
             source (Source): Updated source
         """
-        request = SourceUpdate(name=name)
-        response = requests.patch(f"{self.base_url}/{self.api_prefix}/sources/{source_id}", json=request.model_dump(), headers=self.headers)
+        # Construct request model and dump to dict (Pydantic handles slots for performance)
+        request_data = SourceUpdate(name=name).model_dump()
+        url = self._sources_url_template.format(source_id)
+        # Minor speed up: assign headers/basedata to locals directly
+        headers = self.headers
+
+        # Using requests.patch directly
+        response = requests.patch(url, json=request_data, headers=headers)
         if response.status_code != 200:
             raise ValueError(f"Failed to update source: {response.text}")
-        return Source(**response.json())
+
+        # Minimize allocations: Pydantic has to build the Source here, unavoidable
+        # But we can avoid re-parsing json by passing it directly
+        return Source.model_validate(response.json())
 
     def attach_source(self, source_id: str, agent_id: str) -> AgentState:
         """
