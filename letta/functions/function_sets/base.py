@@ -130,7 +130,7 @@ def archival_memory_search(self: "Agent", query: str, page: Optional[int] = 0, s
         raise e
 
 
-def core_memory_append(agent_state: "AgentState", label: str, content: str) -> Optional[str]:  # type: ignore
+def core_memory_append(agent_state: "AgentState", label: str, content: str) -> Optional[str]:
     """
     Append to the contents of core memory.
 
@@ -141,9 +141,11 @@ def core_memory_append(agent_state: "AgentState", label: str, content: str) -> O
     Returns:
         Optional[str]: None is always returned as this function does not produce a response.
     """
-    current_value = str(agent_state.memory.get_block(label).value)
-    new_value = current_value + "\n" + str(content)
-    agent_state.memory.update_block_value(label=label, value=new_value)
+    memory = agent_state.memory
+    block = memory.get_block(label)
+    # Use f-string for faster concatenation and do not convert to str unnecessarily
+    new_value = f"{block.value}\n{content}"
+    memory.update_block_value(label=label, value=new_value)
     return None
 
 
