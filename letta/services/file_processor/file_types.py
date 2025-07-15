@@ -38,6 +38,7 @@ class FileTypeRegistry:
     def __init__(self):
         """Initialize the registry with default supported file types."""
         self._file_types: Dict[str, FileTypeInfo] = {}
+        self._simple_text_mime_types_cache: Set[str] | None = None
         self._register_default_types()
 
     def _register_default_types(self) -> None:
@@ -176,7 +177,14 @@ class FileTypeRegistry:
         Returns:
             Set of MIME type strings for files that can be read as plain text
         """
-        return {file_type.mime_type for file_type in self._file_types.values() if file_type.is_simple_text}
+        # Use cached value to avoid recomputation on repeated calls
+        if self._simple_text_mime_types_cache is None:
+            self._simple_text_mime_types_cache = {
+                file_type.mime_type
+                for file_type in self._file_types.values()
+                if file_type.is_simple_text
+            }
+        return self._simple_text_mime_types_cache
 
     def is_simple_text_mime_type(self, mime_type: str) -> bool:
         """
