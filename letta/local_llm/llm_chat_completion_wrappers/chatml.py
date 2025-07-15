@@ -67,20 +67,28 @@ class ChatMLInnerMonologueWrapper(LLMChatCompletionWrapper):
 
     def _compile_function_description(self, schema, add_inner_thoughts=True) -> str:
         """Go from a JSON schema to a string description for a prompt"""
-        # airorobos style
-        func_str = ""
-        func_str += f"{schema['name']}:"
-        func_str += f"\n  description: {schema['description']}"
-        func_str += f"\n  params:"
-        if add_inner_thoughts:
-            from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
+        # FAST: use list + join instead of += string concat in a loop
 
-            func_str += f"\n    {INNER_THOUGHTS_KWARG}: {INNER_THOUGHTS_KWARG_DESCRIPTION}"
-        for param_k, param_v in schema["parameters"]["properties"].items():
-            # TODO we're ignoring type
-            func_str += f"\n    {param_k}: {param_v['description']}"
-        # TODO we're ignoring schema['parameters']['required']
-        return func_str
+        lines = [
+            f"{schema['name']}:",
+            f"  description: {schema['description']}",
+            "  params:"
+        ]
+
+        if add_inner_thoughts:
+            # cache the import locally, but only if needed
+            from letta.local_llm.constants import (
+                INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION)
+            lines.append(f"    {INNER_THOUGHTS_KWARG}: {INNER_THOUGHTS_KWARG_DESCRIPTION}")
+
+        # Pull out properties just once for perf
+        properties = schema["parameters"]["properties"]
+        # Each param: ignore type and required for now
+        for param_k, param_v in properties.items():
+            lines.append(f"    {param_k}: {param_v['description']}")
+
+        # Join with newline at the end to produce a single string
+        return "\n".join(lines)
 
     def _compile_function_block(self, functions) -> str:
         """functions dict -> string describing functions choices"""
