@@ -45,8 +45,8 @@ def is_openai_reasoning_model(model: str) -> bool:
     """Utility function to check if the model is a 'reasoner'"""
 
     # NOTE: needs to be updated with new model releases
-    is_reasoning = model.startswith("o1") or model.startswith("o3") or model.startswith("o4")
-    return is_reasoning
+    # Use tuple for efficient multi-prefix match
+    return model.startswith(("o1", "o3", "o4"))
 
 
 def accepts_developer_role(model: str) -> bool:
@@ -74,10 +74,8 @@ def supports_temperature_param(model: str) -> bool:
 def supports_parallel_tool_calling(model: str) -> bool:
     """Certain OpenAI models don't support parallel tool calls."""
 
-    if is_openai_reasoning_model(model):
-        return False
-    else:
-        return True
+    # Directly return the negation, avoiding branch
+    return not is_openai_reasoning_model(model)
 
 
 # TODO move into LLMConfig as a field?
