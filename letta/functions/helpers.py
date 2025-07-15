@@ -198,13 +198,19 @@ def _generate_import_code(module_attr_map: Optional[dict]):
     if not module_attr_map:
         return ""
 
-    code_lines = []
+    code_blocks = []
+    append = code_blocks.append  # Local var for speed
     for module, attr in module_attr_map.items():
-        module_name = module.split(".")[-1]
-        code_lines.append(f"# Load the module\n    {module_name} = importlib.import_module('{module}')")
-        code_lines.append(f"    # Access the {attr} from the module")
-        code_lines.append(f"    {attr} = getattr({module_name}, '{attr}')")
-    return "\n".join(code_lines)
+        # Use rsplit for faster split from the right
+        module_name = module.rsplit(".", 1)[-1]
+        # Build the whole code block at once to minimize append/join/f-string overhead
+        append(
+            f"# Load the module\n"
+            f"    {module_name} = importlib.import_module('{module}')\n"
+            f"    # Access the {attr} from the module\n"
+            f"    {attr} = getattr({module_name}, '{attr}')"
+        )
+    return "\n".join(code_blocks)
 
 
 def _parse_letta_response_for_assistant_message(
