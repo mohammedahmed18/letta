@@ -34,7 +34,6 @@ class FileTypeInfo:
 
 class FileTypeRegistry:
     """Central registry for supported file types."""
-
     def __init__(self):
         """Initialize the registry with default supported file types."""
         self._file_types: Dict[str, FileTypeInfo] = {}
@@ -167,7 +166,9 @@ class FileTypeRegistry:
         Returns:
             Dictionary mapping extensions (with leading dot) to MIME types
         """
-        return {file_type.extension: file_type.mime_type for file_type in self._file_types.values()}
+        # Optimize: Use key (extension) directly instead of extracting extension attribute
+        # This avoids extra attribute lookups and is faster for large dicts
+        return {ext: info.mime_type for ext, info in self._file_types.items()}
 
     def get_simple_text_mime_types(self) -> Set[str]:
         """
