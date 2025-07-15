@@ -23,16 +23,11 @@ from letta.settings import settings
 
 # TODO needed?
 def generate_mcp_tool_wrapper(mcp_tool_name: str) -> tuple[str, str]:
-
-    wrapper_function_str = f"""\
-def {mcp_tool_name}(**kwargs):
-    raise RuntimeError("Something went wrong - we should never be using the persisted source code for MCP. Please reach out to Letta team")
-"""
-
-    # Compile safety check
-    _assert_code_gen_compilable(wrapper_function_str.strip())
-
-    return mcp_tool_name, wrapper_function_str.strip()
+    wrapper_function_str = (
+        f"def {mcp_tool_name}(**kwargs):\n"
+        f"    raise RuntimeError(\"Something went wrong - we should never be using the persisted source code for MCP. Please reach out to Letta team\")"
+    )
+    return mcp_tool_name, wrapper_function_str
 
 
 def generate_langchain_tool_wrapper(
