@@ -67,20 +67,20 @@ class ChatMLInnerMonologueWrapper(LLMChatCompletionWrapper):
 
     def _compile_function_description(self, schema, add_inner_thoughts=True) -> str:
         """Go from a JSON schema to a string description for a prompt"""
-        # airorobos style
-        func_str = ""
-        func_str += f"{schema['name']}:"
-        func_str += f"\n  description: {schema['description']}"
-        func_str += f"\n  params:"
+        # Optimized: use a list for string accumulation and join at the end
+        func_lines = []
+        func_lines.append(f"{schema['name']}:")
+        func_lines.append(f"  description: {schema['description']}")
+        func_lines.append(f"  params:")
         if add_inner_thoughts:
-            from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
-
-            func_str += f"\n    {INNER_THOUGHTS_KWARG}: {INNER_THOUGHTS_KWARG_DESCRIPTION}"
+            from letta.local_llm.constants import (
+                INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION)
+            func_lines.append(f"    {INNER_THOUGHTS_KWARG}: {INNER_THOUGHTS_KWARG_DESCRIPTION}")
         for param_k, param_v in schema["parameters"]["properties"].items():
             # TODO we're ignoring type
-            func_str += f"\n    {param_k}: {param_v['description']}"
+            func_lines.append(f"    {param_k}: {param_v['description']}")
         # TODO we're ignoring schema['parameters']['required']
-        return func_str
+        return '\n'.join(func_lines)
 
     def _compile_function_block(self, functions) -> str:
         """functions dict -> string describing functions choices"""
@@ -377,20 +377,11 @@ class ChatMLOuterInnerMonologueWrapper(ChatMLInnerMonologueWrapper):
 
     def _compile_function_block(self, functions) -> str:
         """NOTE: modified to not include inner thoughts at all as extras"""
-        prompt = ""
-
-        prompt += " ".join(
-            [
-                "Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation.",
-                "Provide your response in JSON format.",
-                "You must always include inner thoughts, but you do not always have to call a function.",
-            ]
-        )
-        prompt += f"\nAvailable functions:"
+        # Optimized: use a list and join for string assembly
+        buf = [_COMPILE_FUNCTION_BLOCK_HEADER]
         for function_dict in functions:
-            prompt += f"\n{self._compile_function_description(function_dict, add_inner_thoughts=False)}"
-
-        return prompt
+            buf.append(self._compile_function_description(function_dict, add_inner_thoughts=False))
+        return '\n'.join(buf)
 
     def _compile_function_call(self, function_call, inner_thoughts=None):
         """NOTE: Modified to put inner thoughts outside the function"""
@@ -475,3 +466,10 @@ class ChatMLOuterInnerMonologueWrapper(ChatMLInnerMonologueWrapper):
             }
 
         return message
+
+_COMPILE_FUNCTION_BLOCK_HEADER = (
+    "Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. "
+    "Provide your response in JSON format. "
+    "You must always include inner thoughts, but you do not always have to call a function."
+    "\nAvailable functions:"
+)
