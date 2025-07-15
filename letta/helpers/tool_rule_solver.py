@@ -59,6 +59,7 @@ class ToolRulesSolver(BaseModel):
         tool_call_history: Optional[List[str]] = None,
         **kwargs,
     ):
+        # Local aliases for fastpath attribute assignment below.
         super().__init__(
             init_tool_rules=init_tool_rules or [],
             continue_tool_rules=continue_tool_rules or [],
@@ -71,32 +72,40 @@ class ToolRulesSolver(BaseModel):
         )
 
         if tool_rules:
+            # Local var references for faster repeated access
+            init_tool_rules_lst = self.init_tool_rules
+            continue_tool_rules_lst = self.continue_tool_rules
+            child_based_tool_rules_lst = self.child_based_tool_rules
+            parent_tool_rules_lst = self.parent_tool_rules
+            terminal_tool_rules_lst = self.terminal_tool_rules
+            required_before_exit_tool_rules_lst = self.required_before_exit_tool_rules
+
+            # Dict dispatch for type checking, function, container
+            _dispatch = {
+                ToolRuleType.run_first:   (InitToolRule, init_tool_rules_lst.append),
+                ToolRuleType.constrain_child_tools: (ChildToolRule, child_based_tool_rules_lst.append),
+                ToolRuleType.conditional: (ConditionalToolRule, child_based_tool_rules_lst.append),
+                ToolRuleType.exit_loop: (TerminalToolRule, terminal_tool_rules_lst.append),
+                ToolRuleType.continue_loop: (ContinueToolRule, continue_tool_rules_lst.append),
+                ToolRuleType.max_count_per_step: (MaxCountPerStepToolRule, child_based_tool_rules_lst.append),
+                ToolRuleType.parent_last_tool: (ParentToolRule, parent_tool_rules_lst.append),
+                ToolRuleType.required_before_exit: (RequiredBeforeExitToolRule, required_before_exit_tool_rules_lst.append)
+            }
+
             for rule in tool_rules:
-                if rule.type == ToolRuleType.run_first:
-                    assert isinstance(rule, InitToolRule)
-                    self.init_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.constrain_child_tools:
-                    assert isinstance(rule, ChildToolRule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.conditional:
-                    assert isinstance(rule, ConditionalToolRule)
+                tup = _dispatch.get(rule.type)
+                if not tup:
+                    continue # skip unknown rule type
+                typ, appender = tup
+
+                # Only validate/extra-check when needed
+                if rule.type is ToolRuleType.conditional:
+                    # Validation for conditional rules
                     self.validate_conditional_tool(rule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.exit_loop:
-                    assert isinstance(rule, TerminalToolRule)
-                    self.terminal_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.continue_loop:
-                    assert isinstance(rule, ContinueToolRule)
-                    self.continue_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.max_count_per_step:
-                    assert isinstance(rule, MaxCountPerStepToolRule)
-                    self.child_based_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.parent_last_tool:
-                    assert isinstance(rule, ParentToolRule)
-                    self.parent_tool_rules.append(rule)
-                elif rule.type == ToolRuleType.required_before_exit:
-                    assert isinstance(rule, RequiredBeforeExitToolRule)
-                    self.required_before_exit_tool_rules.append(rule)
+                # Only assert in debug mode (faster in production)
+                if __debug__:
+                    assert isinstance(rule, typ)
+                appender(rule)
 
     def register_tool_call(self, tool_name: str):
         """Update the internal state to track tool call history."""
@@ -245,6 +254,7 @@ class ToolRulesSolver(BaseModel):
         Raises:
             ToolRuleValidationError: If the rule is invalid
         """
-        if len(rule.child_output_mapping) == 0:
+        # Validate a conditional tool rule
+        if not rule.child_output_mapping:
             raise ToolRuleValidationError("Conditional tool rule must have at least one child tool.")
         return True
