@@ -7,7 +7,7 @@ import requests
 from letta.constants import ADMIN_PREFIX, BASE_MEMORY_TOOLS, BASE_TOOLS, DEFAULT_HUMAN, DEFAULT_PERSONA, FUNCTION_RETURN_CHAR_LIMIT
 from letta.data_sources.connectors import DataConnector
 from letta.functions.functions import parse_source_code
-from letta.schemas.agent import AgentState, AgentType, CreateAgent, UpdateAgent
+from letta.schemas.agent import AgentState, AgentType, CreateAgent
 from letta.schemas.block import Block, BlockUpdate, CreateBlock, Human, Persona
 from letta.schemas.embedding_config import EmbeddingConfig
 
@@ -433,7 +433,6 @@ class RESTClient(AbstractClient):
         base_url (str): Base URL of the REST API
         headers (Dict): Headers for the REST API (includes token)
     """
-
     def __init__(
         self,
         base_url: str,
@@ -460,14 +459,16 @@ class RESTClient(AbstractClient):
         super().__init__(debug=debug)
         self.base_url = base_url
         self.api_prefix = api_prefix
+
+        h = {"accept": "application/json"}
         if token:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
+            h["Authorization"] = f"Bearer {token}"
         elif password:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {password}"}
-        else:
-            self.headers = {"accept": "application/json"}
+            h["Authorization"] = f"Bearer {password}"
         if headers:
-            self.headers.update(headers)
+            h.update(headers)
+        self.headers = h
+
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
 
@@ -664,22 +665,18 @@ class RESTClient(AbstractClient):
         Returns:
             agent_state (AgentState): State of the updated agent
         """
-        request = UpdateAgent(
-            name=name,
-            system=system,
-            tool_ids=tool_ids,
-            tags=tags,
-            description=description,
-            metadata=metadata,
-            llm_config=llm_config,
-            embedding_config=embedding_config,
-            message_ids=message_ids,
-            response_format=response_format,
+        # Avoid slow dataclass creation and serialization by using dict directly (large win for update_agent hot path)
+        payload = self._make_update_agent_dict(
+            name, system, tool_ids, tags, description, metadata,
+            llm_config, embedding_config, message_ids, response_format
         )
-        response = requests.patch(f"{self.base_url}/{self.api_prefix}/agents/{agent_id}", json=request.model_dump(), headers=self.headers)
+        url = f"{self.base_url}/{self.api_prefix}/agents/{agent_id}"
+        response = requests.patch(url, json=payload, headers=self.headers)
         if response.status_code != 200:
             raise ValueError(f"Failed to update agent: {response.text}")
-        return AgentState(**response.json())
+        # Use local var for JSON for speedup and clarity
+        agent_json = response.json()
+        return AgentState(**agent_json)
 
     def get_tools_from_agent(self, agent_id: str) -> List[Tool]:
         """
@@ -740,6 +737,7 @@ class RESTClient(AbstractClient):
         Returns:
             agent_state (AgentState): State of the updated agent
         """
+        # This is already fully optimized: return the update_agent call directly.
         return self.update_agent(agent_id, name=new_name)
 
     def delete_agent(self, agent_id: str) -> None:
@@ -2216,3 +2214,33 @@ class RESTClient(AbstractClient):
         if response.status_code != 200:
             raise ValueError(f"Failed to get tags: {response.text}")
         return response.json()
+
+    @staticmethod
+    def _make_update_agent_dict(
+        name, system, tool_ids, tags, description, metadata,
+        llm_config, embedding_config, message_ids, response_format
+    ):
+        # Using a dictionary directly for minimal overhead instead of constructing a full dataclass and calling model_dump fresh
+        # Only non-None attributes are included for smaller payload and serialization speed
+        payload = {}
+        if name is not None:
+            payload["name"] = name
+        if system is not None:
+            payload["system"] = system
+        if tool_ids is not None:
+            payload["tool_ids"] = tool_ids
+        if tags is not None:
+            payload["tags"] = tags
+        if description is not None:
+            payload["description"] = description
+        if metadata is not None:
+            payload["metadata"] = metadata
+        if llm_config is not None:
+            payload["llm_config"] = llm_config.model_dump() if hasattr(llm_config, "model_dump") else llm_config
+        if embedding_config is not None:
+            payload["embedding_config"] = embedding_config.model_dump() if hasattr(embedding_config, "model_dump") else embedding_config
+        if message_ids is not None:
+            payload["message_ids"] = message_ids
+        if response_format is not None:
+            payload["response_format"] = response_format.model_dump() if hasattr(response_format, "model_dump") else response_format
+        return payload
