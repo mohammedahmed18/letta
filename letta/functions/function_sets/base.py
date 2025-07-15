@@ -259,7 +259,7 @@ def memory_replace(agent_state: "AgentState", label: str, old_str: str, new_str:
     return success_msg
 
 
-def memory_insert(agent_state: "AgentState", label: str, new_str: str, insert_line: int = -1) -> Optional[str]:  # type: ignore
+def memory_insert(agent_state: "AgentState", label: str, new_str: str, insert_line: int = -1) -> Optional[str]:
     """
     The memory_insert command allows you to insert text at a specific location in a memory block.
 
@@ -271,56 +271,58 @@ def memory_insert(agent_state: "AgentState", label: str, new_str: str, insert_li
     Returns:
         Optional[str]: None is always returned as this function does not produce a response.
     """
-    import re
+    # Fast line-number prefix check (no regex needed)
+    if "\nLine " in new_str or new_str.startswith("Line "):
+        # Validate for an actual line number prefix after or at the start
+        s = new_str.splitlines()
+        for line in s:
+            if line.startswith("Line ") and ": " in line:
+                raise ValueError(
+                    "new_str contains a line number prefix, which is not allowed. Do not include line numbers when calling memory tools (line numbers are for display purposes only)."
+                )
 
-    if bool(re.search(r"\nLine \d+: ", new_str)):
-        raise ValueError(
-            "new_str contains a line number prefix, which is not allowed. Do not include line numbers when calling memory tools (line numbers are for display purposes only)."
-        )
     if CORE_MEMORY_LINE_NUMBER_WARNING in new_str:
         raise ValueError(
             "new_str contains a line number warning, which is not allowed. Do not include line number information when calling memory tools (line numbers are for display purposes only)."
         )
 
-    current_value = str(agent_state.memory.get_block(label).value).expandtabs()
-    new_str = str(new_str).expandtabs()
-    current_value_lines = current_value.split("\n")
+    current_value = agent_state.memory.get_block(label).value
+    # Always treat both as str, and expandtabs if needed
+    if not isinstance(current_value, str):
+        current_value = str(current_value)
+    if not isinstance(new_str, str):
+        new_str = str(new_str)
+    if "\t" in current_value or "\t" in new_str:
+        current_value = current_value.expandtabs()
+        new_str = new_str.expandtabs()
+    # Split into lines
+    current_value_lines = current_value.split('\n')
     n_lines = len(current_value_lines)
-
-    # Check if we're in range, from 0 (pre-line), to 1 (first line), to n_lines (last line)
+    # Clamp insert_line to valid range
     if insert_line == -1:
         insert_line = n_lines
     elif insert_line < 0 or insert_line > n_lines:
         raise ValueError(
             f"Invalid `insert_line` parameter: {insert_line}. It should be within the range of lines of the memory block: {[0, n_lines]}, or -1 to append to the end of the memory block."
         )
+    # No need for comments - just insert
+    new_str_lines = new_str.split('\n')
+    # Assemble result, minimize copying if inserting at front/back
+    if insert_line == 0:
+        new_value_lines = new_str_lines + current_value_lines
+    elif insert_line == n_lines:
+        new_value_lines = current_value_lines + new_str_lines
+    else:
+        new_value_lines = current_value_lines[:insert_line] + new_str_lines + current_value_lines[insert_line:]
+    new_value = '\n'.join(new_value_lines)
 
-    # Insert the new string as a line
-    new_str_lines = new_str.split("\n")
-    new_value_lines = current_value_lines[:insert_line] + new_str_lines + current_value_lines[insert_line:]
-    snippet_lines = (
-        current_value_lines[max(0, insert_line - SNIPPET_LINES) : insert_line]
-        + new_str_lines
-        + current_value_lines[insert_line : insert_line + SNIPPET_LINES]
-    )
-
-    # Collate into the new value to update
-    new_value = "\n".join(new_value_lines)
-    snippet = "\n".join(snippet_lines)
-
-    # Write into the block
     agent_state.memory.update_block_value(label=label, value=new_value)
 
-    # Prepare the success message
-    success_msg = f"The core memory block with label `{label}` has been edited. "
-    # success_msg += self._make_output(
-    #     snippet,
-    #     "a snippet of the edited file",
-    #     max(1, insert_line - SNIPPET_LINES + 1),
-    # )
-    # success_msg += f"A snippet of core memory block `{label}`:\n{snippet}\n"
-    success_msg += "Review the changes and make sure they are as expected (correct indentation, no duplicate lines, etc). Edit the memory block again if necessary."
-
+    # Only produce success message, as in original
+    success_msg = (
+        f"The core memory block with label `{label}` has been edited. "
+        "Review the changes and make sure they are as expected (correct indentation, no duplicate lines, etc). Edit the memory block again if necessary."
+    )
     return success_msg
 
 
