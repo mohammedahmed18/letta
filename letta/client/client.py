@@ -458,16 +458,18 @@ class RESTClient(AbstractClient):
             password (Optional[str]): The password for the REST API when using self hosted letta service.
         """
         super().__init__(debug=debug)
+        # Precompute headers only once, minimize branching/merging
+        _headers = {"accept": "application/json"}
+        if token is not None:
+            _headers["Authorization"] = f"Bearer {token}"
+        elif password is not None:
+            _headers["Authorization"] = f"Bearer {password}"
+        if headers:
+            _headers.update(headers)
+        self.headers = _headers
         self.base_url = base_url
         self.api_prefix = api_prefix
-        if token:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
-        elif password:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {password}"}
-        else:
-            self.headers = {"accept": "application/json"}
-        if headers:
-            self.headers.update(headers)
+        self._endpoint_prefix = f"{base_url}/{api_prefix}/agents"
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
 
@@ -762,7 +764,9 @@ class RESTClient(AbstractClient):
         Returns:
             agent_state (AgentState): State representation of the agent
         """
-        response = requests.get(f"{self.base_url}/{self.api_prefix}/agents/{agent_id}", headers=self.headers)
+        # Avoid extra attribute lookups, use precomputed _endpoint_prefix
+        url = f"{self._endpoint_prefix}/{agent_id}"
+        response = requests.get(url, headers=self.headers)
         assert response.status_code == 200, f"Failed to get agent: {response.text}"
         return AgentState(**response.json())
 
