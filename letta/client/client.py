@@ -433,7 +433,6 @@ class RESTClient(AbstractClient):
         base_url (str): Base URL of the REST API
         headers (Dict): Headers for the REST API (includes token)
     """
-
     def __init__(
         self,
         base_url: str,
@@ -460,16 +459,23 @@ class RESTClient(AbstractClient):
         super().__init__(debug=debug)
         self.base_url = base_url
         self.api_prefix = api_prefix
+
+        # Compose default headers only once and update with user-provided headers if given
+        hdr = {"accept": "application/json"}
         if token:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
+            hdr["Authorization"] = f"Bearer {token}"
         elif password:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {password}"}
-        else:
-            self.headers = {"accept": "application/json"}
+            hdr["Authorization"] = f"Bearer {password}"
+
         if headers:
-            self.headers.update(headers)
+            hdr.update(headers)
+        self.headers = hdr
+
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
+
+        # Precompute environment variable endpoint prefix for faster string ops later
+        self._envvar_endpoint_prefix = f"{self.base_url}/{self.api_prefix}/sandbox-config/environment-variable"
 
     def list_agents(
         self,
@@ -1870,14 +1876,23 @@ class RESTClient(AbstractClient):
         Returns:
             SandboxEnvironmentVariable: The updated environment variable.
         """
-        payload = {k: v for k, v in {"key": key, "value": value, "description": description}.items() if v is not None}
-        response = requests.patch(
-            f"{self.base_url}/{self.api_prefix}/sandbox-config/environment-variable/{env_var_id}",
-            headers=self.headers,
-            json=payload,
-        )
-        if response.status_code != 200:
-            raise ValueError(f"Failed to update environment variable with ID '{env_var_id}': {response.text}")
+
+        # Build payload using tuple filter instead of dict and avoid dict overhead
+        payload = {}
+        if key is not None:
+            payload["key"] = key
+        if value is not None:
+            payload["value"] = value
+        if description is not None:
+            payload["description"] = description
+
+        url = f"{self._envvar_endpoint_prefix}/{env_var_id}"
+        response = requests.patch(url, headers=self.headers, json=payload)
+        status = response.status_code
+        if status != 200:
+            raise ValueError(
+                f"Failed to update environment variable with ID '{env_var_id}': {response.text}"
+            )
         return SandboxEnvironmentVariable(**response.json())
 
     def delete_sandbox_env_var(self, env_var_id: str) -> None:
