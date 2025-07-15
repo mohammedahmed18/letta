@@ -37,7 +37,7 @@ from letta.constants import (
 from letta.helpers.json_helpers import json_dumps, json_loads
 from letta.schemas.openai.chat_completion_response import ChatCompletionResponse
 
-DEBUG = False
+DEBUG = os.environ.get("LOG_LEVEL") == "DEBUG"
 if "LOG_LEVEL" in os.environ:
     if os.environ["LOG_LEVEL"] == "DEBUG":
         DEBUG = True
