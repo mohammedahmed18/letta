@@ -460,14 +460,18 @@ class RESTClient(AbstractClient):
         super().__init__(debug=debug)
         self.base_url = base_url
         self.api_prefix = api_prefix
-        if token:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {token}"}
-        elif password:
-            self.headers = {"accept": "application/json", "Authorization": f"Bearer {password}"}
-        else:
-            self.headers = {"accept": "application/json"}
+
+        headers_dict = {"accept": "application/json"}
+        # Add authentication header if needed
+        if token is not None:
+            headers_dict["Authorization"] = f"Bearer {token}"
+        elif password is not None:
+            headers_dict["Authorization"] = f"Bearer {password}"
+        # Merge extra headers if provided
         if headers:
-            self.headers.update(headers)
+            headers_dict.update(headers)
+        self.headers = headers_dict
+
         self._default_llm_config = default_llm_config
         self._default_embedding_config = default_embedding_config
 
@@ -2179,12 +2183,11 @@ class RESTClient(AbstractClient):
         Returns:
             runs (List[Run]): List of active runs
         """
-        response = requests.get(
-            f"{self.base_url}/{self.api_prefix}/runs/active",
-            headers=self.headers,
-        )
+        url = f"{self.base_url}/{self.api_prefix}/runs/active"
+        response = requests.get(url, headers=self.headers)
         if response.status_code != 200:
             raise ValueError(f"Failed to list active runs: {response.text}")
+        # Fast direct comprehension with no intermediate variables
         return [Run(**run) for run in response.json()]
 
     def get_tags(
