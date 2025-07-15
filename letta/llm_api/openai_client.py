@@ -427,41 +427,51 @@ def fill_image_content_in_messages(openai_message_list: List[dict], pydantic_mes
     if len(openai_message_list) != len(pydantic_message_list):
         return openai_message_list
 
+    # Cache enum values, apply local var for "user"
+    _role_user = "user"
+    _type_text = MessageContentType.text
+    _type_image = MessageContentType.image
+
+    # Prebind necessary lookups for performance
+    append_msg = [].append  # dummy to hint at prebinding, but will use new_message_list.append instead
+
     new_message_list = []
-    for idx in range(len(openai_message_list)):
-        openai_message, pydantic_message = openai_message_list[idx], pydantic_message_list[idx]
-        if pydantic_message.role != "user":
+    for openai_message, pydantic_message in zip(openai_message_list, pydantic_message_list):
+        role = pydantic_message.role
+        if role != _role_user:
             new_message_list.append(openai_message)
             continue
 
-        if not isinstance(pydantic_message.content, list) or (
-            len(pydantic_message.content) == 1 and pydantic_message.content[0].type == MessageContentType.text
-        ):
+        content = pydantic_message.content
+        if not isinstance(content, list):
+            new_message_list.append(openai_message)
+            continue
+        if len(content) == 1 and content[0].type == _type_text:
             new_message_list.append(openai_message)
             continue
 
         message_content = []
-        for content in pydantic_message.content:
-            if content.type == MessageContentType.text:
-                message_content.append(
-                    {
-                        "type": "text",
-                        "text": content.text,
-                    }
-                )
-            elif content.type == MessageContentType.image:
+        # Inline frequently used lookups for performance
+        for c in content:
+            ctype = c.type
+            # No need for repeated attribute-dotted lookups
+            if ctype == _type_text:
+                message_content.append({"type": "text", "text": c.text})
+            elif ctype == _type_image:
+                source = c.source
+                detail = getattr(source, "detail", None) or "auto"
                 message_content.append(
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:{content.source.media_type};base64,{content.source.data}",
-                            "detail": content.source.detail or "auto",
+                            "url": f"data:{source.media_type};base64,{source.data}",
+                            "detail": detail,
                         },
                     }
                 )
             else:
-                raise ValueError(f"Unsupported content type {content.type}")
+                raise ValueError(f"Unsupported content type {ctype}")
 
-        new_message_list.append({"role": "user", "content": message_content})
+        new_message_list.append({"role": _role_user, "content": message_content})
 
     return new_message_list
