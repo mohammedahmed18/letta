@@ -70,6 +70,8 @@ class ToolRulesSolver(BaseModel):
             **kwargs,
         )
 
+        # Precompute set of tool names for fast lookup in has_children_tools
+        self._child_tool_names = set()
         if tool_rules:
             for rule in tool_rules:
                 if rule.type == ToolRuleType.run_first:
@@ -78,10 +80,12 @@ class ToolRulesSolver(BaseModel):
                 elif rule.type == ToolRuleType.constrain_child_tools:
                     assert isinstance(rule, ChildToolRule)
                     self.child_based_tool_rules.append(rule)
+                    self._child_tool_names.add(rule.tool_name)
                 elif rule.type == ToolRuleType.conditional:
                     assert isinstance(rule, ConditionalToolRule)
                     self.validate_conditional_tool(rule)
                     self.child_based_tool_rules.append(rule)
+                    self._child_tool_names.add(rule.tool_name)
                 elif rule.type == ToolRuleType.exit_loop:
                     assert isinstance(rule, TerminalToolRule)
                     self.terminal_tool_rules.append(rule)
@@ -91,12 +95,19 @@ class ToolRulesSolver(BaseModel):
                 elif rule.type == ToolRuleType.max_count_per_step:
                     assert isinstance(rule, MaxCountPerStepToolRule)
                     self.child_based_tool_rules.append(rule)
+                    self._child_tool_names.add(rule.tool_name)
                 elif rule.type == ToolRuleType.parent_last_tool:
                     assert isinstance(rule, ParentToolRule)
                     self.parent_tool_rules.append(rule)
                 elif rule.type == ToolRuleType.required_before_exit:
                     assert isinstance(rule, RequiredBeforeExitToolRule)
                     self.required_before_exit_tool_rules.append(rule)
+
+        else:
+            # collect child_based_tool_rules from explicit list even if tool_rules isn't passed
+            for rule in self.child_based_tool_rules:
+                if hasattr(rule, "tool_name"):
+                    self._child_tool_names.add(rule.tool_name)
 
     def register_tool_call(self, tool_name: str):
         """Update the internal state to track tool call history."""
@@ -145,7 +156,7 @@ class ToolRulesSolver(BaseModel):
 
     def has_children_tools(self, tool_name):
         """Check if the tool has children tools"""
-        return any(rule.tool_name == tool_name for rule in self.child_based_tool_rules)
+        return tool_name in self._child_tool_names
 
     def is_continue_tool(self, tool_name):
         """Check if the tool is defined as a continue tool in the tool rules."""
