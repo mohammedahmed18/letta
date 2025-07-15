@@ -2,6 +2,8 @@ from letta.errors import LLMJSONParsingError
 from letta.helpers.json_helpers import json_dumps, json_loads
 from letta.local_llm.json_parser import clean_json
 from letta.local_llm.llm_chat_completion_wrappers.wrapper_base import LLMChatCompletionWrapper
+import json
+from datetime import datetime
 
 PREFIX_HINT = """# Reminders:
 # Important information about yourself and the user is stored in (limited) core memory
@@ -31,19 +33,16 @@ class LLaMA3InnerMonologueWrapper(LLMChatCompletionWrapper):
     def __init__(
         self,
         json_indent=2,
-        # simplify_json_content=True,
         simplify_json_content=False,
         clean_function_args=True,
         include_assistant_prefix=True,
         assistant_prefix_extra='\n{\n  "function":',
         assistant_prefix_extra_first_message='\n{\n  "function": "send_message",',
-        allow_custom_roles=True,  # allow roles outside user/assistant
-        use_system_role_in_user=False,  # use the system role on user messages that don't use "type: user_message"
-        # allow_function_role=True,  # use function role for function replies?
-        allow_function_role=False,  # use function role for function replies?
-        no_function_role_role="assistant",  # if no function role, which role to use?
-        no_function_role_prefix="FUNCTION RETURN:\n",  # if no function role, what prefix to use?
-        # add a guiding hint
+        allow_custom_roles=True,
+        use_system_role_in_user=False,
+        allow_function_role=False,
+        no_function_role_role="assistant",
+        no_function_role_prefix="FUNCTION RETURN:\n",
         assistant_prefix_hint=False,
     ):
         self.simplify_json_content = simplify_json_content
@@ -57,11 +56,8 @@ class LLaMA3InnerMonologueWrapper(LLMChatCompletionWrapper):
         self.allow_custom_roles = allow_custom_roles
         self.use_system_role_in_user = use_system_role_in_user
         self.allow_function_role = allow_function_role
-        # extras for when the function role is disallowed
         self.no_function_role_role = no_function_role_role
         self.no_function_role_prefix = no_function_role_prefix
-
-        # how to set json in prompt
         self.json_indent = json_indent
 
     def _compile_function_description(self, schema, add_inner_thoughts=True) -> str:
@@ -270,14 +266,10 @@ class LLaMA3InnerMonologueWrapper(LLMChatCompletionWrapper):
         cleaned_function_args = function_args.copy() if function_args is not None else {}
 
         if function_name == "send_message":
-            # strip request_heartbeat
             cleaned_function_args.pop("request_heartbeat", None)
 
-        inner_thoughts = None
-        if "inner_thoughts" in function_args:
-            inner_thoughts = cleaned_function_args.pop("inner_thoughts")
-
-        # TODO more cleaning to fix errors LLM makes
+        # Fast single lookup for inner_thoughts w/o double scan
+        inner_thoughts = cleaned_function_args.pop("inner_thoughts", None)
         return inner_thoughts, cleaned_function_name, cleaned_function_args
 
     def output_to_chat_completion_response(self, raw_llm_output, first_message=False):
@@ -294,27 +286,26 @@ class LLaMA3InnerMonologueWrapper(LLMChatCompletionWrapper):
             }
         }
         """
-        # if self.include_opening_brance_in_prefix and raw_llm_output[0] != "{":
-        # raw_llm_output = "{" + raw_llm_output
+        # Apply prefix only if needed (slice match faster than not-in)
         assistant_prefix = self.assistant_prefix_extra_first_message if first_message else self.assistant_prefix_extra
-        if assistant_prefix and raw_llm_output[: len(assistant_prefix)] != assistant_prefix:
-            # print(f"adding prefix back to llm, raw_llm_output=\n{raw_llm_output}")
+        if assistant_prefix and not raw_llm_output.startswith(assistant_prefix):
             raw_llm_output = assistant_prefix + raw_llm_output
-            # print(f"->\n{raw_llm_output}")
 
         try:
-            # cover llama.cpp server for now #TODO remove this when fixed
+            # Remove trailing <|eot_id|> token and spaces only once
             raw_llm_output = raw_llm_output.rstrip()
             if raw_llm_output.endswith("<|eot_id|>"):
                 raw_llm_output = raw_llm_output[: -len("<|eot_id|>")]
             function_json_output = clean_json(raw_llm_output)
         except Exception as e:
-            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}")
+            raise Exception(
+                f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}"
+            )
         try:
-            # NOTE: weird bug can happen where 'function' gets nested if the prefix in the prompt isn't abided by
-            if isinstance(function_json_output["function"], dict):
-                function_json_output = function_json_output["function"]
-            # regular unpacking
+            # Avoid double key lookup
+            fn_obj = function_json_output["function"]
+            if isinstance(fn_obj, dict):
+                function_json_output = fn_obj
             function_name = function_json_output["function"]
             function_parameters = function_json_output["params"]
         except KeyError as e:
@@ -323,18 +314,77 @@ class LLaMA3InnerMonologueWrapper(LLMChatCompletionWrapper):
             )
 
         if self.clean_func_args:
-            (
-                inner_thoughts,
-                function_name,
-                function_parameters,
-            ) = self._clean_function_args(function_name, function_parameters)
+            inner_thoughts, function_name, function_parameters = \
+                self._clean_function_args(function_name, function_parameters)
+        else:
+            inner_thoughts = None
 
         message = {
             "role": "assistant",
             "content": inner_thoughts,
             "function_call": {
                 "name": function_name,
-                "arguments": json_dumps(function_parameters),
+                "arguments": fast_json_dumps(function_parameters, indent=self.json_indent),
             },
         }
         return message
+
+
+# Helper functions for clean_json instead of lambda allocations
+def strategy_json_loads(output):
+    return json_loads(output)
+
+def strategy_json_loads_rcurly(output):
+    return json_loads(output + "}")
+
+def strategy_json_loads_r2curly(output):
+    return json_loads(output + "}}")
+
+def strategy_json_loads_quote2curly(output):
+    return json_loads(output + '"}}')
+
+def strategy_json_loads_strip(output):
+    s = output.strip().rstrip(",")
+    return json_loads(s + "}")
+
+def strategy_json_loads_strip_r2curly(output):
+    s = output.strip().rstrip(",")
+    return json_loads(s + "}}")
+
+def strategy_json_loads_strip_quote2curly(output):
+    s = output.strip().rstrip(",")
+    return json_loads(s + '"}}')
+
+def strategy_repair_json_string(output):
+    return json_loads(repair_json_string(output))
+
+def strategy_repair_even_worse_json(output):
+    return json_loads(repair_even_worse_json(output))
+
+def strategy_extract_first_json(output):
+    return extract_first_json(output + "}}")
+
+def strategy_clean_and_interpret_send_message_json(output):
+    return clean_and_interpret_send_message_json(output)
+
+def strategy_json_loads_replace_esc_us(output):
+    return json_loads(replace_escaped_underscores(output))
+
+def strategy_extract_first_json_replace_esc_us(output):
+    return extract_first_json(replace_escaped_underscores(output) + "}}")
+
+# ----------- Optimized json_dumps ---------------
+def _safe_serializer(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8")
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+def fast_json_dumps(data, indent=2):
+    """Avoids allocating closure for default handler; only use if needed."""
+    # Fast path: if clearly basic types, avoid default handler
+    try:
+        return json.dumps(data, indent=indent, ensure_ascii=False)
+    except TypeError:
+        return json.dumps(data, indent=indent, default=_safe_serializer, ensure_ascii=False)

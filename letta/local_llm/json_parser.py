@@ -3,6 +3,8 @@ import re
 
 from letta.errors import LLMJSONParsingError
 from letta.helpers.json_helpers import json_loads
+from datetime import datetime
+from letta.utils import printd
 
 
 def clean_json_string_extra_backslash(s):
@@ -171,32 +173,111 @@ def repair_even_worse_json(json_string):
 
 
 def clean_json(raw_llm_output, messages=None, functions=None):
-    from letta.utils import printd
-
+    # Avoid repeated .strip/.rstrip between strategies
+    stripped = raw_llm_output.strip().rstrip(",")
     strategies = [
-        lambda output: json_loads(output),
-        lambda output: json_loads(output + "}"),
-        lambda output: json_loads(output + "}}"),
-        lambda output: json_loads(output + '"}}'),
-        # with strip and strip comma
-        lambda output: json_loads(output.strip().rstrip(",") + "}"),
-        lambda output: json_loads(output.strip().rstrip(",") + "}}"),
-        lambda output: json_loads(output.strip().rstrip(",") + '"}}'),
-        # more complex patchers
-        lambda output: json_loads(repair_json_string(output)),
-        lambda output: json_loads(repair_even_worse_json(output)),
-        lambda output: extract_first_json(output + "}}"),
-        lambda output: clean_and_interpret_send_message_json(output),
-        # replace underscores
-        lambda output: json_loads(replace_escaped_underscores(output)),
-        lambda output: extract_first_json(replace_escaped_underscores(output) + "}}"),
+        strategy_json_loads,
+        strategy_json_loads_rcurly,
+        strategy_json_loads_r2curly,
+        strategy_json_loads_quote2curly,
+        lambda output: strategy_json_loads_strip(output),
+        lambda output: strategy_json_loads_strip_r2curly(output),
+        lambda output: strategy_json_loads_strip_quote2curly(output),
+        strategy_repair_json_string,
+        strategy_repair_even_worse_json,
+        strategy_extract_first_json,
+        strategy_clean_and_interpret_send_message_json,
+        strategy_json_loads_replace_esc_us,
+        strategy_extract_first_json_replace_esc_us,
     ]
-
-    for strategy in strategies:
+    for strat in strategies:
         try:
-            printd(f"Trying strategy: {strategy.__name__}")
-            return strategy(raw_llm_output)
+            # printd has been imported globally, call once if DEBUG
+            if printd.__globals__.get("DEBUG"):
+                try:
+                    printd(f"Trying strategy: {getattr(strat, '__name__', str(strat))}")
+                except Exception:
+                    pass
+            return strat(raw_llm_output)
         except (json.JSONDecodeError, LLMJSONParsingError) as e:
-            printd(f"Strategy {strategy.__name__} failed with error: {e}")
-
+            if printd.__globals__.get("DEBUG"):
+                try:
+                    printd(f"Strategy {getattr(strat, '__name__', str(strat))} failed with error: {e}")
+                except Exception:
+                    pass
+            continue
     raise LLMJSONParsingError(f"Failed to decode valid Letta JSON from LLM output:\n=====\n{raw_llm_output}\n=====")
+
+
+# Helper functions for clean_json instead of lambda allocations
+def strategy_json_loads(output):
+    return json_loads(output)
+
+
+def strategy_json_loads_rcurly(output):
+    return json_loads(output + "}")
+
+
+def strategy_json_loads_r2curly(output):
+    return json_loads(output + "}}")
+
+
+def strategy_json_loads_quote2curly(output):
+    return json_loads(output + '"}}')
+
+
+def strategy_json_loads_strip(output):
+    s = output.strip().rstrip(",")
+    return json_loads(s + "}")
+
+
+def strategy_json_loads_strip_r2curly(output):
+    s = output.strip().rstrip(",")
+    return json_loads(s + "}}")
+
+
+def strategy_json_loads_strip_quote2curly(output):
+    s = output.strip().rstrip(",")
+    return json_loads(s + '"}}')
+
+
+def strategy_repair_json_string(output):
+    return json_loads(repair_json_string(output))
+
+
+def strategy_repair_even_worse_json(output):
+    return json_loads(repair_even_worse_json(output))
+
+
+def strategy_extract_first_json(output):
+    return extract_first_json(output + "}}")
+
+
+def strategy_clean_and_interpret_send_message_json(output):
+    return clean_and_interpret_send_message_json(output)
+
+
+def strategy_json_loads_replace_esc_us(output):
+    return json_loads(replace_escaped_underscores(output))
+
+
+def strategy_extract_first_json_replace_esc_us(output):
+    return extract_first_json(replace_escaped_underscores(output) + "}}")
+
+
+# ----------- Optimized json_dumps ---------------
+def _safe_serializer(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8")
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
+def fast_json_dumps(data, indent=2):
+    """Avoids allocating closure for default handler; only use if needed."""
+    # Fast path: if clearly basic types, avoid default handler
+    try:
+        return json.dumps(data, indent=indent, ensure_ascii=False)
+    except TypeError:
+        return json.dumps(data, indent=indent, default=_safe_serializer, ensure_ascii=False)
