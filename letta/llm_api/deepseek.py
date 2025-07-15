@@ -27,16 +27,16 @@ def handle_assistant_message(assistant_message: AssistantMessage) -> AssistantMe
     """
     For `AssistantMessage` objects, remove the `tool_calls` field and add them to the `content` field.
     """
-
-    if "tool_calls" in assistant_message.dict().keys():
-        assistant_message.content = "".join(
-            [
-                # f"<ToolCall> name: {tool_call.function.name}, function: {tool_call.function}</ToolCall>"
-                f"<ToolCall> {json.dumps(tool_call.function.dict())} </ToolCall>"
-                for tool_call in assistant_message.tool_calls
-            ]
-        )
-        del assistant_message.tool_calls
+    tool_calls = getattr(assistant_message, "tool_calls", None)
+    if tool_calls:
+        # Reuse string buffer for performance
+        parts = []
+        for tool_call in tool_calls:
+            # No .dict() construction for the whole assistant_message
+            parts.append(f"<ToolCall> {json.dumps(tool_call.function.dict())} </ToolCall>")
+        assistant_message.content = "".join(parts)
+        # Remove the tool_calls attribute instead of re-building the instance or touching __dict__
+        delattr(assistant_message, "tool_calls")
     return assistant_message
 
 
@@ -50,35 +50,38 @@ def map_messages_to_deepseek_format(messages: List[ChatMessage]) -> List[_Messag
 
     """
     deepseek_messages = []
+    # Use fast local variable binding inside loop
+    append = deepseek_messages.append
+
     for idx, message in enumerate(messages):
+        role = message.role
         # First message is the system prompt, add it
-        if idx == 0 and message.role == "system":
-            deepseek_messages.append(message)
+        if idx == 0 and role == "system":
+            append(message)
             continue
-        if message.role == "user":
-            if deepseek_messages[-1].role == "assistant" or deepseek_messages[-1].role == "system":
-                # User message, add it
-                deepseek_messages.append(UserMessage(content=message.content))
+
+        # Fast branch for main roles only: no repeated [-1] lookup
+        last_role = deepseek_messages[-1].role
+        if role == "user":
+            if last_role == "assistant" or last_role == "system":
+                append(UserMessage(content=message.content))
             else:
-                # add to the content of the previous message
+                # Only if previous is user, merge content
                 deepseek_messages[-1].content += message.content
-        elif message.role == "assistant":
-            if deepseek_messages[-1].role == "user":
-                # Assistant message, remove tool calls and add them to the content
-                deepseek_messages.append(handle_assistant_message(message))
+        elif role == "assistant":
+            if last_role == "user":
+                append(handle_assistant_message(message))
             else:
-                # add to the content of the previous message
                 deepseek_messages[-1].content += message.content
-        elif message.role == "tool" and deepseek_messages[-1].role == "assistant":
-            # Tool message, add it to the last assistant message
-            merged_message = merge_tool_message(deepseek_messages[-1], message)
-            deepseek_messages[-1] = merged_message
+        elif role == "tool" and last_role == "assistant":
+            deepseek_messages[-1] = merge_tool_message(deepseek_messages[-1], message)
         else:
+            # Leave print for rare/debug path as before
             print(f"Skipping message: {message}")
 
-    # This needs to end on a user message, add a dummy message if the last was assistant
+    # Needs to end on a user message, add a dummy message if the last was assistant
     if deepseek_messages[-1].role == "assistant":
-        deepseek_messages.append(UserMessage(content=""))
+        append(UserMessage(content=""))
     return deepseek_messages
 
 
