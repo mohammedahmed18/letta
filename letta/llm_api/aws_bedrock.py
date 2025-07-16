@@ -106,16 +106,7 @@ def bedrock_get_model_context_window(model_id: str) -> int:
     """
     Get context window size for a specific model.
     """
-    # Bedrock doesn't provide this via API, so we maintain a mapping
-    context_windows = {
-        "anthropic.claude-3-5-sonnet-20241022-v2:0": 200000,
-        "anthropic.claude-3-5-sonnet-20240620-v1:0": 200000,
-        "anthropic.claude-3-5-haiku-20241022-v1:0": 200000,
-        "anthropic.claude-3-haiku-20240307-v1:0": 200000,
-        "anthropic.claude-3-opus-20240229-v1:0": 200000,
-        "anthropic.claude-3-sonnet-20240229-v1:0": 200000,
-    }
-    return context_windows.get(model_id, 200000)  # default to 100k if unknown
+    return _CONTEXT_WINDOWS.get(model_id, _DEFAULT_CONTEXT_WINDOW)  # default to 200k if unknown
 
 
 """
@@ -158,3 +149,14 @@ def bedrock_get_model_context_window(model_id: str) -> int:
     }
 }
 """
+
+_CONTEXT_WINDOWS = {
+    "anthropic.claude-3-5-sonnet-20241022-v2:0": 200000,
+    "anthropic.claude-3-5-sonnet-20240620-v1:0": 200000,
+    "anthropic.claude-3-5-haiku-20241022-v1:0": 200000,
+    "anthropic.claude-3-haiku-20240307-v1:0": 200000,
+    "anthropic.claude-3-opus-20240229-v1:0": 200000,
+    "anthropic.claude-3-sonnet-20240229-v1:0": 200000,
+}
+
+_DEFAULT_CONTEXT_WINDOW = 200000
