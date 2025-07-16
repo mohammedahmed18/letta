@@ -8,7 +8,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from sqlalchemy import Engine, NullPool, QueuePool, create_engine
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (AsyncEngine, AsyncSession,
+                                    async_sessionmaker, create_async_engine)
 from sqlalchemy.orm import sessionmaker
 
 from letta.config import LettaConfig
@@ -226,36 +227,33 @@ class DatabaseRegistry:
     @contextmanager
     def session(self, name: str = "default") -> Generator[Any, None, None]:
         """Context manager for database sessions."""
+        # Fastest way: only check top of the call stack for the likely caller
+        import inspect
+
         caller_info = "unknown caller"
         try:
-            import inspect
-
             frame = inspect.currentframe()
-            stack = inspect.getouterframes(frame)
-
-            for i, frame_info in enumerate(stack):
-                module = inspect.getmodule(frame_info.frame)
+            outer = frame.f_back
+            count = 0
+            # Look only up to 6 stack frames to avoid slow full scans
+            while outer and count < 6:
+                module = inspect.getmodule(outer)
+                filename = outer.f_code.co_filename
                 module_name = module.__name__ if module else "unknown"
-
-                if module_name != "contextlib" and "db.py" not in frame_info.filename:
-                    caller_module = module_name
-                    caller_function = frame_info.function
-                    caller_lineno = frame_info.lineno
-                    caller_file = frame_info.filename.split("/")[-1]
-
-                    caller_info = f"{caller_module}.{caller_function}:{caller_lineno} ({caller_file})"
+                if "contextlib" not in module_name and "db.py" not in filename:
+                    caller_info = f"{module_name}.{outer.f_code.co_name}:{outer.f_lineno} ({filename.rsplit('/',1)[-1]})"
                     break
-        except:
+                outer = outer.f_back
+                count += 1
+        except Exception:
             pass
         finally:
-            del frame
+            frame = None
 
         self.session_caller_trace(caller_info)
-
         session_factory = self.get_session_factory(name)
-        if not session_factory:
+        if session_factory is None:
             raise ValueError(f"No session factory found for '{name}'")
-
         session = session_factory()
         try:
             yield session
