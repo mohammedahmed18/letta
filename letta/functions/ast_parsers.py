@@ -50,12 +50,13 @@ def get_function_annotations_from_source(source_code: str, function_name: str) -
         ValueError: If the function is not found in the source code.
     """
     tree = ast.parse(source_code)
-    for node in ast.iter_child_nodes(tree):
+    # Only walk until we find the first match
+    for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name == function_name:
             annotations = {}
             for arg in node.args.args:
                 if arg.annotation is not None:
-                    annotation_str = ast.unparse(arg.annotation)
+                    annotation_str = _fast_unparse(arg.annotation)
                     annotations[arg.arg] = annotation_str
             return annotations
     raise ValueError(f"Function '{function_name}' not found in the provided source code.")
@@ -139,3 +140,35 @@ def get_function_name_and_docstring(source_code: str, name: Optional[str] = None
 
         traceback.print_exc()
         raise LettaToolCreateError(f"Failed to parse function name and docstring: {str(e)}")
+
+
+def _fast_unparse(node):
+    # Fast path for most common annotation types
+    if isinstance(node, ast.Name):
+        return node.id
+    elif isinstance(node, ast.Attribute):
+        names = []
+        while isinstance(node, ast.Attribute):
+            names.append(node.attr)
+            node = node.value
+        if isinstance(node, ast.Name):
+            names.append(node.id)
+            return ".".join(reversed(names))
+    elif isinstance(node, ast.Subscript):
+        # Handles cases like: List[int], Optional[str], etc.
+        value_str = _fast_unparse(node.value)
+        if hasattr(node, "slice"):
+            # Python 3.9+
+            slice_str = _fast_unparse(node.slice)
+        else:
+            # Pre-3.9 compatibility
+            slice_str = _fast_unparse(node.slice.value)
+        return f"{value_str}[{slice_str}]"
+    elif isinstance(node, ast.Tuple):
+        return ", ".join(_fast_unparse(e) for e in node.elts)
+    elif isinstance(node, ast.Constant):
+        return repr(node.value)
+    elif isinstance(node, ast.Str):  # for <=3.7
+        return repr(node.s)
+    # Fallback for any other annotation
+    return ast.unparse(node)
