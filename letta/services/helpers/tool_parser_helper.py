@@ -77,25 +77,47 @@ def runtime_override_tool_json_schema(
         1. We will inject `send_message` tool calls with `response_format` if provided
         2. Tools will have an additional `request_heartbeat` parameter added.
     """
+    # Grab relevant constants outside the loop for speed
+    send_message_tool = SEND_MESSAGE_TOOL_NAME
+    req_hb_param = REQUEST_HEARTBEAT_PARAM
+    hb_desc = REQUEST_HEARTBEAT_DESCRIPTION
+    resp_format_type = None if response_format is None else response_format.type
+
+    # Only needed if response_format might be json_schema
+    json_schema = None
+    if response_format and response_format.type == ResponseFormatType.json_schema:
+        json_schema = response_format.json_schema["schema"]
+
     for tool_json in tool_list:
-        if tool_json["name"] == SEND_MESSAGE_TOOL_NAME and response_format and response_format.type != ResponseFormatType.text:
-            if response_format.type == ResponseFormatType.json_schema:
-                tool_json["parameters"]["properties"]["message"] = response_format.json_schema["schema"]
-            if response_format.type == ResponseFormatType.json_object:
-                tool_json["parameters"]["properties"]["message"] = {
-                    "type": "object",
-                    "description": "Message contents. All unicode (including emojis) are supported.",
-                    "additionalProperties": True,
-                    "properties": {},
-                }
-        if request_heartbeat:
-            # TODO (cliandy): see support for tool control loop parameters
-            if tool_json["name"] != SEND_MESSAGE_TOOL_NAME:
-                tool_json["parameters"]["properties"][REQUEST_HEARTBEAT_PARAM] = {
-                    "type": "boolean",
-                    "description": REQUEST_HEARTBEAT_DESCRIPTION,
-                }
-                if REQUEST_HEARTBEAT_PARAM not in tool_json["parameters"]["required"]:
-                    tool_json["parameters"]["required"].append(REQUEST_HEARTBEAT_PARAM)
+        name = tool_json["name"]
+        params = tool_json["parameters"]
+        props = params["properties"]
+
+        # Section 1: Optimize SEND_MESSAGE mutation block
+        if name == send_message_tool and response_format is not None and resp_format_type != ResponseFormatType.text:
+            if resp_format_type == ResponseFormatType.json_schema:
+                props["message"] = json_schema
+            elif resp_format_type == ResponseFormatType.json_object:
+                # Use prebuilt dict so we don't recreate each iteration
+                props["message"] = _SEND_MESSAGE_JSON_OBJECT_MESSAGE
+
+        # Section 2: Optimize HEARTBEAT parameter injection
+        if request_heartbeat and name != send_message_tool:
+            props[req_hb_param] = {
+                "type": "boolean",
+                "description": hb_desc,
+            }
+            # Optimize required membership test by checking set membership if this gets large
+            required_list = params["required"]
+            if req_hb_param not in required_list:
+                required_list.append(req_hb_param)
 
     return tool_list
+
+
+_SEND_MESSAGE_JSON_OBJECT_MESSAGE = {
+    "type": "object",
+    "description": "Message contents. All unicode (including emojis) are supported.",
+    "additionalProperties": True,
+    "properties": {},
+}
