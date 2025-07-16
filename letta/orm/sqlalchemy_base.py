@@ -5,6 +5,7 @@ from functools import wraps
 from pprint import pformat
 from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, Union
 
+from pydantic import BaseModel
 from sqlalchemy import Sequence, String, and_, delete, func, or_, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +14,9 @@ from sqlalchemy.orm.interfaces import ORMOption
 
 from letta.log import get_logger
 from letta.orm.base import Base, CommonSqlalchemyMetaMixins
-from letta.orm.errors import DatabaseTimeoutError, ForeignKeyConstraintViolationError, NoResultFound, UniqueConstraintViolationError
+from letta.orm.errors import (DatabaseTimeoutError,
+                              ForeignKeyConstraintViolationError,
+                              NoResultFound, UniqueConstraintViolationError)
 from letta.orm.sqlite_functions import adapt_array
 
 if TYPE_CHECKING:
@@ -466,19 +469,22 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         Raises:
             NoResultFound: if the object is not found
         """
-        # this is ok because read_multiple will check if the
-        identifiers = [] if identifier is None else [identifier]
-        found = cls.read_multiple(db_session, identifiers, actor, access, access_type, check_is_deleted, **kwargs)
-        if len(found) == 0:
-            # for backwards compatibility.
-            conditions = []
+        # Avoid unnecessary list copy
+        if identifier is None:
+            found = cls.read_multiple(db_session, [], actor, access, access_type, check_is_deleted, **kwargs)
+        else:
+            found = cls.read_multiple(db_session, [identifier], actor, access, access_type, check_is_deleted, **kwargs)
+
+        if not found:
+            # build conditions message as fast as possible
+            reasons = []
             if identifier:
-                conditions.append(f"id={identifier}")
+                reasons.append(f"id={identifier}")
             if actor:
-                conditions.append(f"access level in {access} for {actor}")
+                reasons.append(f"access level in {access} for {actor}")
             if check_is_deleted and hasattr(cls, "is_deleted"):
-                conditions.append("is_deleted=False")
-            raise NoResultFound(f"{cls.__name__} not found with {', '.join(conditions if conditions else ['no conditions'])}")
+                reasons.append("is_deleted=False")
+            raise NoResultFound(f"{cls.__name__} not found with {', '.join(reasons or ['no conditions'])}")
         return found[0]
 
     @classmethod
@@ -1068,11 +1074,13 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
     def to_pydantic(self) -> "BaseModel":
         """Converts the SQLAlchemy model to its corresponding Pydantic model."""
         model = self.__pydantic_model__.model_validate(self, from_attributes=True)
-
-        # Explicitly map metadata_ to metadata in Pydantic model
-        if hasattr(self, "metadata_") and hasattr(model, "metadata_"):
-            setattr(model, "metadata_", self.metadata_)  # Ensures correct assignment
-
+        # Only assign if both present and different
+        if (
+            hasattr(self, "metadata_")
+            and hasattr(model, "metadata_")
+            and getattr(model, "metadata_", None) != getattr(self, "metadata_", None)
+        ):
+            setattr(model, "metadata_", self.metadata_)
         return model
 
     def pretty_print_columns(self) -> str:
