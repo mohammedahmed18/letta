@@ -215,27 +215,12 @@ LettaMessageContentUnion = Annotated[
 
 
 def create_letta_message_content_union_schema():
+    # Return shallow copies to avoid mutation issues for callers
     return {
-        "oneOf": [
-            {"$ref": "#/components/schemas/TextContent"},
-            {"$ref": "#/components/schemas/ImageContent"},
-            {"$ref": "#/components/schemas/ToolCallContent"},
-            {"$ref": "#/components/schemas/ToolReturnContent"},
-            {"$ref": "#/components/schemas/ReasoningContent"},
-            {"$ref": "#/components/schemas/RedactedReasoningContent"},
-            {"$ref": "#/components/schemas/OmittedReasoningContent"},
-        ],
+        "oneOf": list(_ONEOF),  # reuse static dicts; list() is shallow and fast
         "discriminator": {
             "propertyName": "type",
-            "mapping": {
-                "text": "#/components/schemas/TextContent",
-                "image": "#/components/schemas/ImageContent",
-                "tool_call": "#/components/schemas/ToolCallContent",
-                "tool_return": "#/components/schemas/ToolCallContent",
-                "reasoning": "#/components/schemas/ReasoningContent",
-                "redacted_reasoning": "#/components/schemas/RedactedReasoningContent",
-                "omitted_reasoning": "#/components/schemas/OmittedReasoningContent",
-            },
+            "mapping": dict(_MAPPING),  # shallow copy to avoid accidental mutation
         },
     }
 
@@ -252,3 +237,31 @@ def get_letta_message_content_union_str_json_schema():
             {"type": "string"},
         ],
     }
+
+_ONEOF = [
+    {"$ref": "#/components/schemas/TextContent"},
+    {"$ref": "#/components/schemas/ImageContent"},
+    {"$ref": "#/components/schemas/ToolCallContent"},
+    {"$ref": "#/components/schemas/ToolReturnContent"},
+    {"$ref": "#/components/schemas/ReasoningContent"},
+    {"$ref": "#/components/schemas/RedactedReasoningContent"},
+    {"$ref": "#/components/schemas/OmittedReasoningContent"},
+]
+
+_MAPPING = {
+    "text": "#/components/schemas/TextContent",
+    "image": "#/components/schemas/ImageContent",
+    "tool_call": "#/components/schemas/ToolCallContent",
+    "tool_return": "#/components/schemas/ToolCallContent",
+    "reasoning": "#/components/schemas/ReasoningContent",
+    "redacted_reasoning": "#/components/schemas/RedactedReasoningContent",
+    "omitted_reasoning": "#/components/schemas/OmittedReasoningContent",
+}
+
+_CANONICAL_SCHEMA = {
+    "oneOf": _ONEOF,
+    "discriminator": {
+        "propertyName": "type",
+        "mapping": _MAPPING,
+    },
+}
