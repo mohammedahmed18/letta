@@ -22,14 +22,19 @@ def resolve_type(annotation: str):
     Raises:
         ValueError: If the annotation is unsupported or invalid.
     """
-    python_types = {**vars(typing), **vars(builtins)}
+    if annotation in _resolve_type_cache:
+        return _resolve_type_cache[annotation]
 
-    if annotation in python_types:
-        return python_types[annotation]
+    if annotation in _python_types:
+        t = _python_types[annotation]
+        _resolve_type_cache[annotation] = t
+        return t
 
     try:
         # Allow use of typing and builtins in a safe eval context
-        return eval(annotation, python_types)
+        t = eval(annotation, _python_types)
+        _resolve_type_cache[annotation] = t
+        return t
     except Exception:
         raise ValueError(f"Unsupported annotation: {annotation}")
 
@@ -65,31 +70,35 @@ def get_function_annotations_from_source(source_code: str, function_name: str) -
 def coerce_dict_args_by_annotations(function_args: JsonDict, annotations: Dict[str, str]) -> dict:
     coerced_args = dict(function_args)  # Shallow copy
 
+    # Minimize global lookups
+    json_loads = json.loads
+    JSONDecodeError = json.JSONDecodeError
+    literal_eval = ast.literal_eval
+
     for arg_name, value in coerced_args.items():
-        if arg_name in annotations:
-            annotation_str = annotations[arg_name]
+        annotation_str = annotations.get(arg_name)
+        if annotation_str is not None:
             try:
                 arg_type = resolve_type(annotation_str)
 
                 # Always parse strings using literal_eval or json if possible
                 if isinstance(value, str):
                     try:
-                        value = json.loads(value)
-                    except json.JSONDecodeError:
+                        value = json_loads(value)
+                    except JSONDecodeError:
                         try:
-                            value = ast.literal_eval(value)
+                            value = literal_eval(value)
                         except (SyntaxError, ValueError) as e:
                             if arg_type is not str:
                                 raise ValueError(f"Failed to coerce argument '{arg_name}' to {annotation_str}: {e}")
 
-                origin = typing.get_origin(arg_type)
+                origin = _get_origin_cached(arg_type)
                 if origin in (list, dict, tuple, set):
                     # Let the origin (e.g., list) handle coercion
                     coerced_args[arg_name] = origin(value)
                 else:
                     # Coerce simple types (e.g., int, float)
                     coerced_args[arg_name] = arg_type(value)
-
             except Exception as e:
                 raise ValueError(f"Failed to coerce argument '{arg_name}' to {annotation_str}: {e}")
 
@@ -139,3 +148,18 @@ def get_function_name_and_docstring(source_code: str, name: Optional[str] = None
 
         traceback.print_exc()
         raise LettaToolCreateError(f"Failed to parse function name and docstring: {str(e)}")
+
+
+def _get_origin_cached(t):
+    if t in _get_origin_cache:
+        return _get_origin_cache[t]
+    origin = typing.get_origin(t)
+    _get_origin_cache[t] = origin
+    return origin
+
+
+_python_types = {**vars(typing), **vars(builtins)}
+
+_resolve_type_cache = {}
+
+_get_origin_cache = {}
