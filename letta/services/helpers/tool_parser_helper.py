@@ -41,28 +41,26 @@ def convert_param_to_str_value(param_type: str, raw_value: JsonValue) -> str:
     TODO (cliandy): increase sanitization checks here to fail at the right place
     """
 
-    valid_types = {"string", "integer", "boolean", "number", "array", "object"}
-    if param_type not in valid_types:
+    if param_type not in _VALID_TYPES:
         raise TypeError(f"Unsupported type: {param_type}, raw_value={raw_value}")
+
     if param_type == "string":
         # Safely handle python string
         return repr(raw_value)
-    if param_type == "integer":
+    elif param_type == "integer":
         return str(int(raw_value))
-    if param_type == "boolean":
-        if isinstance(raw_value, bool):
-            return str(raw_value)
-        if isinstance(raw_value, int) and raw_value in (0, 1):
-            return str(bool(raw_value))
-        if isinstance(raw_value, str) and raw_value.strip().lower() in ("true", "false"):
-            return raw_value.strip().lower().capitalize()
+    elif param_type == "boolean":
+        # Optimize bool handling to minimize repeated stripping/lowering/conversions
+        if type(raw_value) is bool:
+            return "True" if raw_value else "False"
+        elif type(raw_value) is int and raw_value in (0, 1):
+            return "True" if raw_value == 1 else "False"
+        elif type(raw_value) is str:
+            stripped = raw_value.strip().lower()
+            if stripped in _BOOL_STR_TABLE:
+                return _BOOL_STR_TABLE[stripped]
         raise ValueError(f"Invalid boolean value: {raw_value}")
-    if param_type == "array":
-        pass  # need more testing here
-        # if isinstance(raw_value, str):
-        #     if raw_value.strip()[0] != "[" or raw_value.strip()[-1] != "]":
-        #         raise ValueError(f'Invalid array value: "{raw_value}"')
-        #     return raw_value.strip()
+    # No change to array/object/number handling; falls through to str()
     return str(raw_value)
 
 
@@ -99,3 +97,8 @@ def runtime_override_tool_json_schema(
                     tool_json["parameters"]["required"].append(REQUEST_HEARTBEAT_PARAM)
 
     return tool_list
+
+
+_VALID_TYPES = {"string", "integer", "boolean", "number", "array", "object"}
+
+_BOOL_STR_TABLE = {"true": "True", "false": "False"}
