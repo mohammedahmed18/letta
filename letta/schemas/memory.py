@@ -176,11 +176,15 @@ class Memory(BaseModel, validate_assignment=True):
         if not isinstance(value, str):
             raise ValueError(f"Provided value must be a string")
 
-        for block in self.blocks:
-            if block.label == label:
-                block.value = value
-                return
+        block = self._label2block.get(label)
+        if block is not None:
+            block.value = value
+            return
         raise ValueError(f"Block with label {label} does not exist")
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        self._label2block = {block.label: block for block in self.blocks}
 
 
 # TODO: ideally this is refactored into ChatMemory and the subclasses are given more specific names.
