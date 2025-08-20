@@ -1593,6 +1593,6 @@ class BedrockProvider(Provider):
         return bedrock_get_model_context_window(model_name)
 
     def get_handle(self, model_name: str, is_embedding: bool = False, base_name: Optional[str] = None) -> str:
-        print(model_name)
-        model = model_name.split(".")[-1]
+        # Use rpartition for better performance and lower memory overhead
+        _, _, model = model_name.rpartition('.')
         return f"{self.name}/{model}"
