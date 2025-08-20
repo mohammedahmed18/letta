@@ -112,7 +112,8 @@ class Memory(BaseModel, validate_assignment=True):
 
     def get_prompt_template(self) -> str:
         """Return the current Jinja2 template string."""
-        return str(self.prompt_template)
+        # prompt_template is always a string (see schema); return directly avoids unnecessary str() call
+        return self.prompt_template
 
     def set_prompt_template(self, prompt_template: str):
         """
